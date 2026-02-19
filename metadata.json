@@ -1,0 +1,7 @@
+{
+  "name": "Sapna Carting",
+  "description": "A comprehensive mining and trucking fleet management system for tracking vehicle health, tire inventory, fuel efficiency, and material transport logs.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}

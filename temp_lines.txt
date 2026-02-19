@@ -1,0 +1,8 @@
+﻿      const mtdDataPDF = [
+         ['Metric Tonnage (MT)', mtd.net1.toFixed(3), mtd.net2.toFixed(3), (mtd.net1 + mtd.net2).toFixed(3)],
+         ['Diesel Consumed (L)', mtd.fuel1.toFixed(3), mtd.fuel2.toFixed(3), (mtd.fuel1 + mtd.fuel2).toFixed(3)],
+         ['Amount Spent (â‚¹)', mtd.amt1.toFixed(3), mtd.amt2.toFixed(3), (mtd.amt1 + mtd.amt2).toFixed(3)],
+         ['Avg Load/Trip (MT)', mtd.avgLoad1.toFixed(3), mtd.avgLoad2.toFixed(3), ((mtd.avgLoad1 + mtd.avgLoad2) / 2).toFixed(3)],
+         ['Avg Diesel/Trip (L)', mtd.avgFuel1.toFixed(3), mtd.avgFuel2.toFixed(3), ((mtd.avgFuel1 + mtd.avgFuel2) / 2).toFixed(3)]
+      ];
+
