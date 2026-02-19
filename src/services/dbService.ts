@@ -70,7 +70,7 @@ export const dbService = {
 
       let benchmarks = DEFAULT_BENCHMARKS;
       try {
-        const { data: mSettings, error: sError } = await supabase.from('system_settings').select('*').eq('key', 'benchmarks').single();
+        const { data: mSettings, error: sError } = await supabase.from('system_settings').select('*').eq('key', 'benchmarks').maybeSingle();
         if (!sError && mSettings) {
           benchmarks = mSettings.value;
         }
