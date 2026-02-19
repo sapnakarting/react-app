@@ -6,7 +6,7 @@ import { dbService } from './dbService';
 export type AuthMode = 'MANUAL' | 'SUPABASE';
 
 export const AUTH_CONFIG = {
-  mode: 'SUPABASE' as AuthMode, // Change this to 'SUPABASE' when you move to the cloud
+  mode: 'SUPABASE' as AuthMode, // Change this to 'SUPABASE/MANUAL' when you move to the cloud
 };
 
 export interface AuthStrategy {
