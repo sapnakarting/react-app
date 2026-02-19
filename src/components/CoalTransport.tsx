@@ -237,10 +237,16 @@ const CoalTransport: React.FC<CoalTransportProps> = ({
     const firstOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
     const startOfMonthStr = firstOfMonth.toISOString().split('T')[0];
     
-    // Range 2 (Specific Report Date - the end date selected)
+    // Range 2 (Specific Report Date)
     const r2DateStr = endDate || todayStr;
     const r2Date = new Date(r2DateStr);
 
+    // Range 1 (Month Start until the day before Range 2)
+    const r1StartDateStr = startOfMonthStr;
+    const r1EndDate = new Date(r2Date);
+    r1EndDate.setDate(r1EndDate.getDate() - 1);
+    const r1EndDateStr = r1EndDate.toISOString().split('T')[0];
+    
     // Safety check for invalid dates
     if (isNaN(r2Date.getTime())) {
       return {
@@ -260,15 +266,7 @@ const CoalTransport: React.FC<CoalTransportProps> = ({
     const filteredLogs = logs.filter(l => targetVehicleIds.includes(l.truckId));
     const filteredFuel = fuelLogs.filter(f => targetVehicleIds.includes(f.truckId));
 
-    // Range 1: Month start to the selected date (inclusive) - MTD Total
-    const r1StartDateStr = startOfMonthStr;
-    const r1EndDateStr = r2DateStr; // Selected date (inclusive)
-    
-    // Range 2: Just the last date (selected date)
-    const r2StartDateStr = r2DateStr;
-    const r2EndDateStr = r2DateStr;
-
-    // Range 1 Data: Month start to selected date (all mapped fuel)
+    // Range 1 Data
     const r1Logs = filteredLogs.filter(l => l.date >= r1StartDateStr && l.date <= r1EndDateStr);
     const r1Fuel = filteredFuel.filter(f => {
       const isInRange = f.date >= r1StartDateStr && f.date <= r1EndDateStr;
@@ -276,11 +274,10 @@ const CoalTransport: React.FC<CoalTransportProps> = ({
       return filteredLogs.some(l => l.truckId === f.truckId && l.date === f.date);
     });
 
-    // Range 2 Data: Only the last date (selected date - mapped fuel only)
-    const r2Logs = filteredLogs.filter(l => l.date >= r2StartDateStr && l.date <= r2EndDateStr);
+    // Range 2 Data
+    const r2Logs = filteredLogs.filter(l => l.date === r2DateStr);
     const r2Fuel = filteredFuel.filter(f => {
-       const isInRange = f.date >= r2StartDateStr && f.date <= r2EndDateStr;
-       if (!isInRange) return false;
+       if (f.date !== r2DateStr) return false;
        return filteredLogs.some(l => l.truckId === f.truckId && l.date === f.date);
     });
 
@@ -299,7 +296,7 @@ const CoalTransport: React.FC<CoalTransportProps> = ({
     const trips2 = r2Logs.length;
 
     return {
-      range1Label: `${formatDateHeader(r1StartDateStr)} to ${formatDateHeader(r1EndDateStr)}`,
+      range1Label: r1StartDateStr < r2DateStr ? `${formatDateHeader(r1StartDateStr)} to ${formatDateHeader(r1EndDateStr)}` : 'Prev. Data',
       range2Label: formatDateHeader(r2DateStr) || 'Today',
       net1, net2,
       fuel1, fuel2,
