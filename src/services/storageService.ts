@@ -5,6 +5,8 @@
  * to protect your API keys.
  */
 
+import { supabase } from './supabaseClient';
+
 // Internal helper to access environment variables safely
 const getEnv = (key: string) => {
   try {
@@ -137,7 +139,6 @@ export const storageService = {
 
   // Temporary fallback during your infrastructure migration
   async uploadToSupabaseFallback(bucket: string, path: string, fileData: string): Promise<string | null> {
-    const { supabase } = await import('./supabaseClient');
     
     let mimeType = 'application/octet-stream';
     let base64 = fileData;
