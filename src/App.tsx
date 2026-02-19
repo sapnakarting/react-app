@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import Sidebar from './components/Sidebar';
 import Dashboard from './components/Dashboard';
 import TruckRegistry from './components/TruckRegistry';
@@ -29,6 +29,7 @@ const App: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [editingMiningLog, setEditingMiningLog] = useState<MiningLog | null>(null);
   const [editingCoalLog, setEditingCoalLog] = useState<CoalLog | null>(null);
+  const initialLoadDone = useRef(false);
 
   const refreshState = useCallback(async () => {
     const data = await dbService.getInitialState();
@@ -55,6 +56,9 @@ const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
 
   useEffect(() => {
+    if (initialLoadDone.current) return;
+    initialLoadDone.current = true;
+
     refreshState();
     const checkSession = async () => {
       const user = await authService.getCurrentUser();
