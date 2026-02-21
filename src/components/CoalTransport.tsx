@@ -32,16 +32,13 @@ const CoalTransport: React.FC<CoalTransportProps> = ({
   const [bulkAddCount, setBulkAddCount] = useState('');
   const [visibleGroupCount, setVisibleGroupCount] = useState(30);
   
-  // Helper to format date as dd-mm-yyyy (Indian Format)
   const formatDate = (dateStr: string) => {
     if (!dateStr || !dateStr.includes('-')) return dateStr;
     const parts = dateStr.split('-');
     if (parts.length !== 3) return dateStr;
-    // Parts: [YYYY, MM, DD] -> [DD, MM, YYYY]
     return `${parts[2]}-${parts[1]}-${parts[0]}`;
   };
 
-  // Modal Edit states
   const [editingLogId, setEditingLogId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [editBuffer, setEditBuffer] = useState<Partial<CoalLog>>({});
@@ -53,14 +50,33 @@ const CoalTransport: React.FC<CoalTransportProps> = ({
   const [remarksBuffer, setRemarksBuffer] = useState('');
   const [includeExtriInRoll, setIncludeExtriInRoll] = useState(false);
 
-  // Batch Edit states
   const [batchEditKey, setBatchEditKey] = useState<string | null>(null);
   const [batchEditBuffer, setBatchEditBuffer] = useState({ date: '', from: '', to: '', driverId: '' });
 
-  // Sync includeExtriInRoll logic?
-  // Actually the user wants it simple: Roll is always (Total - 4) * 100.
-  // The 'INC ADJ?' toggle might be redundant now if logic is fixed, but let's keep it for safety
-  // but force the calculation to be robust.
+  const [showReportSettings, setShowReportSettings] = useState(false);
+  const [reportOptions, setReportOptions] = useState({
+    tripDetails: true,
+    remarks: true,
+    tonnage: true,
+    diesel: true,
+    financials: true,
+    unmapped: true
+  });
+  const [columnOptions, setColumnOptions] = useState({
+    date: true,
+    truck: true,
+    driver: true,
+    passNo: true,
+    material: true,
+    grossWt: true,
+    tareWt: true,
+    netWt: true,
+    diesel: true,
+    rate: true,
+    amount: true,
+    remarks: true
+  });
+
   React.useEffect(() => {
     if (selectedGroup) {
       const { entries, tripAdjustment, rollAmount } = selectedGroup;
@@ -69,7 +85,6 @@ const CoalTransport: React.FC<CoalTransportProps> = ({
     }
   }, [selectedGroupKey]);
 
-  // Handle Navigation Params (Deep Linking)
   React.useEffect(() => {
     if (navParams) {
       if (navParams.truckId) setTruckFilter(navParams.truckId);
@@ -77,7 +92,6 @@ const CoalTransport: React.FC<CoalTransportProps> = ({
         setStartDate(navParams.date);
         setEndDate(navParams.date);
       }
-      // Clear after applying to avoid sticky filters on subsequent manual visits
       onClearNav?.();
     }
   }, [navParams, onClearNav]);
@@ -90,22 +104,16 @@ const CoalTransport: React.FC<CoalTransportProps> = ({
   };
 
   const calculateBatchFinancials = (numTrips: number, tripAdj: number) => {
-    // Welfare: Flat 300 if there are any physical trips
     const welfare = numTrips > 0 ? 300 : 0;
-    
-    // Roll: 100 per trip starting from the 5th trip onwards
-    // Factoring in adjustment only if toggled ON
     const effectiveAdj = includeExtriInRoll ? tripAdj : 0;
     const totalEffective = numTrips + effectiveAdj;
     const roll = Math.max(0, totalEffective - 4) * 100;
-    
     return { welfare, roll };
   };
 
-
-  const aggregatedData = useMemo(() => {
+  // 1. Full Aggregation
+  const fullAggregatedData = useMemo(() => {
     const groups: Record<string, any> = {};
-    
     const getPrevDayStr = (dateStr: string) => {
       if (!dateStr || isNaN(Date.parse(dateStr))) return null;
       const d = new Date(dateStr);
@@ -113,7 +121,6 @@ const CoalTransport: React.FC<CoalTransportProps> = ({
       return d.toISOString().split('T')[0];
     };
 
-    // Group logs
     logs.forEach(log => {
       if (!log.date) return;
       const truck = trucks.find(t => t.id === log.truckId);
@@ -130,7 +137,7 @@ const CoalTransport: React.FC<CoalTransportProps> = ({
         groups[key] = {
           key, 
           date: log.date, 
-          actualFuelDate: relevantFuelLogs[0]?.date || null, // Tracking physical fueling date
+          actualFuelDate: relevantFuelLogs[0]?.date || null,
           truckId: log.truckId, 
           plateNumber: truck?.plateNumber || 'Unknown', 
           wheelConfig: truck?.wheelConfig || 'N/A',
@@ -152,7 +159,8 @@ const CoalTransport: React.FC<CoalTransportProps> = ({
           syncedRate: syncedRate,
           fillingTypes: fillingTypes.join(' / '),
           advanceFromYesterday: 0,
-          logs: []
+          logs: [],
+          agentId: log.agentId
         };
       }
       groups[key].entries += 1;
@@ -160,8 +168,6 @@ const CoalTransport: React.FC<CoalTransportProps> = ({
       groups[key].grossWeightTotal += (log.grossWeight || 0);
       groups[key].logs.push(log);
       
-      // Greedy collection of remarks and adjustments to ensure UI consistency 
-      // regardless of which log in the batch is processed first.
       if (log.tripRemarks) groups[key].tripRemarks = log.tripRemarks;
       if (log.dieselRemarks) groups[key].dieselRemarks = log.dieselRemarks;
       if (log.airRemarks) groups[key].airRemarks = log.airRemarks;
@@ -172,31 +178,38 @@ const CoalTransport: React.FC<CoalTransportProps> = ({
       if (log.to && log.to !== 'N/A') groups[key].to = log.to;
     });
 
-    Object.values(groups).forEach((g: any) => {
+    const sortedGroups = Object.values(groups).sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+    sortedGroups.forEach((g: any) => {
       const prevDate = getPrevDayStr(g.date);
       const prevKey = `${prevDate}_${g.truckId}`;
       const prevGroup = groups[prevKey];
+      
       if (prevGroup && prevGroup.dieselAdjustment > 0) {
         g.advanceFromYesterday = Math.abs(prevGroup.dieselAdjustment);
       }
       
-      // DERIVED TOTALS (Source of Truth for UI)
-      // We calculate from current g properties rather than summing from logs
-      // to ensure UI is always "conceptually" correct even if DB data is messy
       const { welfare, roll } = calculateBatchFinancials(g.entries, g.tripAdjustment);
       g.staffWelfare = welfare;
       g.rollAmount = roll;
       g.totalPayable = g.staffWelfare + g.rollAmount;
+      
+      g.netTrips = g.entries + g.tripAdjustment;
+      g.netDiesel = g.diesel + g.advanceFromYesterday - g.dieselAdjustment - g.airAdjustment;
     });
 
-    const privacyFilteredGroups = Object.values(groups).filter((g: any) => {
-      if (role === 'ADMIN') return true;
-      // An aggregated group is visible if its logs belong to the agent
-      // Note: Coal entries are grouped by date/truck. We check if the logs in that group have the agentId.
-      return g.logs.some((l: any) => l.agentId === currentUser.username);
-    });
+    return sortedGroups;
+  }, [logs, trucks, fuelLogs, drivers, includeExtriInRoll]);
 
-    return privacyFilteredGroups.filter((g: any) => {
+  // 2. Filtered Aggregation
+  const aggregatedData = useMemo(() => {
+    let data = fullAggregatedData;
+
+    if (role !== 'ADMIN') {
+       data = data.filter((g: any) => g.logs.some((l: any) => l.agentId === currentUser.username));
+    }
+
+    return data.filter((g: any) => {
       const matchesTruck = truckFilter ? g.truckId === truckFilter : true;
       const matchesSearch = searchQuery ? g.plateNumber.toLowerCase().includes(searchQuery.toLowerCase()) : true;
       const logDate = new Date(g.date);
@@ -206,12 +219,12 @@ const CoalTransport: React.FC<CoalTransportProps> = ({
       if (end) end.setHours(23, 59, 59, 999);
       const matchesDate = (!start || logDate >= start) && (!end || logDate <= end);
       return matchesTruck && matchesSearch && matchesDate;
-    }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  }, [logs, trucks, fuelLogs, drivers, truckFilter, searchQuery, startDate, endDate, includeExtriInRoll]);
+    }).sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }, [fullAggregatedData, truckFilter, searchQuery, startDate, endDate, role, currentUser]);
 
   const globalTotals = useMemo(() => {
-    return aggregatedData.reduce((acc, g) => {
-      const netTrips = g.entries; 
+    return aggregatedData.reduce((acc: any, g: any) => {
+      const netTrips = g.netTrips; 
       const netAmount = g.diesel * g.syncedRate;
       return {
         tonnage: acc.tonnage + (g.netWeight || 0),
@@ -222,9 +235,8 @@ const CoalTransport: React.FC<CoalTransportProps> = ({
     }, { tonnage: 0, diesel: 0, trips: 0, amount: 0 });
   }, [aggregatedData]);
 
-  const selectedGroup = aggregatedData.find(g => g.key === selectedGroupKey);
+  const selectedGroup = aggregatedData.find((g: any) => g.key === selectedGroupKey);
 
-  // Helper: Format Date for Headers (e.g., "11-Feb")
   const formatDateHeader = (dateStr: string) => {
      if (!dateStr) return '';
      const d = new Date(dateStr);
@@ -234,93 +246,90 @@ const CoalTransport: React.FC<CoalTransportProps> = ({
   const calculateMTD = () => {
     const today = new Date();
     const todayStr = today.toISOString().split('T')[0];
-    const firstOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+    
+    // UPDATED LOGIC: Use selected End Date as the anchor
+    let anchorDateStr = todayStr;
+    if (endDate && !isNaN(Date.parse(endDate))) {
+       anchorDateStr = endDate;
+    }
+    const anchorDate = new Date(anchorDateStr);
+    const firstOfMonth = new Date(anchorDate.getFullYear(), anchorDate.getMonth(), 1);
     const startOfMonthStr = firstOfMonth.toISOString().split('T')[0];
     
-    // Range 2 (Specific Report Date)
-    const r2DateStr = endDate || todayStr;
+    const r2DateStr = anchorDateStr; 
     const r2Date = new Date(r2DateStr);
 
-    // Range 1 (Month Start until the day before Range 2)
     const r1StartDateStr = startOfMonthStr;
     const r1EndDate = new Date(r2Date);
     r1EndDate.setDate(r1EndDate.getDate() - 1);
     const r1EndDateStr = r1EndDate.toISOString().split('T')[0];
     
-    // Safety check for invalid dates
     if (isNaN(r2Date.getTime())) {
       return {
         range1Label: 'N/A', range2Label: 'N/A',
         net1: 0, net2: 0, fuel1: 0, fuel2: 0, amt1: 0, amt2: 0,
-        trips1: 0, trips2: 0,
         avgLoad1: 0, avgLoad2: 0, avgFuel1: 0, avgFuel2: 0,
         rate1: 0, rate2: 0
       };
     }
 
-    // Determine target vehicles (Coal Only by default)
-    const targetVehicleIds = trucks
-      .filter(t => t.wheelConfig && t.wheelConfig.includes('WHEEL'))
-      .map(t => t.id);
+    const baseTrucks = trucks.filter(t => t.wheelConfig && t.wheelConfig.includes('WHEEL'));
+    let targetVehicleIds = baseTrucks.map(t => t.id);
 
-    const filteredLogs = logs.filter(l => targetVehicleIds.includes(l.truckId));
-    const filteredFuel = fuelLogs.filter(f => targetVehicleIds.includes(f.truckId));
+    if (truckFilter) {
+      targetVehicleIds = [truckFilter];
+    } else if (searchQuery) {
+      targetVehicleIds = baseTrucks
+        .filter(t => t.plateNumber.toLowerCase().includes(searchQuery.toLowerCase()))
+        .map(t => t.id);
+    }
 
-    // Range 1 Data
-    const r1Logs = filteredLogs.filter(l => l.date >= r1StartDateStr && l.date <= r1EndDateStr);
-    const r1Fuel = filteredFuel.filter(f => {
-      const isInRange = f.date >= r1StartDateStr && f.date <= r1EndDateStr;
-      if (!isInRange) return false;
-      return filteredLogs.some(l => l.truckId === f.truckId && l.date === f.date);
-    });
+    const targetGroups = fullAggregatedData.filter((g: any) => targetVehicleIds.includes(g.truckId));
 
-    // Range 2 Data
-    const r2Logs = filteredLogs.filter(l => l.date === r2DateStr);
-    const r2Fuel = filteredFuel.filter(f => {
-       if (f.date !== r2DateStr) return false;
-       return filteredLogs.some(l => l.truckId === f.truckId && l.date === f.date);
-    });
+    const r1Groups = targetGroups.filter((g: any) => g.date >= r1StartDateStr && g.date <= r1EndDateStr);
+    const r2Groups = targetGroups.filter((g: any) => g.date === r2DateStr);
 
-    const sumNet = (list: any[]) => list.reduce((a, b) => a + (b.netWeight || 0), 0);
-    const sumFuel = (list: any[]) => list.reduce((a, b) => a + (b.fuelLiters || 0), 0);
-    const sumAmt = (list: any[]) => list.reduce((a, b) => a + ((b.fuelLiters || 0) * (b.dieselPrice || 0)), 0);
+    const sumAggregates = (groups: any[]) => {
+       return groups.reduce((acc, g) => {
+          return {
+             netWeight: acc.netWeight + g.netWeight,
+             dieselPumped: acc.dieselPumped + g.diesel, 
+             netDiesel: acc.netDiesel + g.netDiesel,    
+             amount: acc.amount + (g.diesel * g.syncedRate),
+             dieselForRate: acc.dieselForRate + (g.diesel > 0 ? g.diesel : 0),
+             physicalTrips: acc.physicalTrips + g.entries,
+             netTrips: acc.netTrips + g.netTrips        
+          };
+       }, { netWeight: 0, dieselPumped: 0, netDiesel: 0, amount: 0, dieselForRate: 0, physicalTrips: 0, netTrips: 0 });
+    };
 
-    const net1 = sumNet(r1Logs);
-    const net2 = sumNet(r2Logs);
-    const fuel1 = sumFuel(r1Fuel);
-    const fuel2 = sumFuel(r2Fuel);
-    const amt1 = sumAmt(r1Fuel);
-    const amt2 = sumAmt(r2Fuel);
-
-    const trips1 = r1Logs.length;
-    const trips2 = r2Logs.length;
+    const t1 = sumAggregates(r1Groups);
+    const t2 = sumAggregates(r2Groups);
 
     return {
       range1Label: r1StartDateStr < r2DateStr ? `${formatDateHeader(r1StartDateStr)} to ${formatDateHeader(r1EndDateStr)}` : 'Prev. Data',
       range2Label: formatDateHeader(r2DateStr) || 'Today',
-      net1, net2,
-      fuel1, fuel2,
-      amt1, amt2,
-      trips1, trips2,
-      avgLoad1: trips1 > 0 ? (net1 / trips1) : 0,
-      avgLoad2: trips2 > 0 ? (net2 / trips2) : 0,
-      avgFuel1: trips1 > 0 ? (fuel1 / trips1) : 0,
-      avgFuel2: trips2 > 0 ? (fuel2 / trips2) : 0,
-      rate1: fuel1 > 0 ? (amt1 / fuel1) : 0,
-      rate2: fuel2 > 0 ? (amt2 / fuel2) : 0
+      net1: t1.netWeight, net2: t2.netWeight,
+      fuel1: t1.dieselPumped, fuel2: t2.dieselPumped, 
+      amt1: t1.amount, amt2: t2.amount,
+      avgLoad1: t1.physicalTrips > 0 ? (t1.netWeight / t1.physicalTrips) : 0,
+      avgLoad2: t2.physicalTrips > 0 ? (t2.netWeight / t2.physicalTrips) : 0,
+      avgFuel1: t1.netTrips > 0 ? (t1.netDiesel / t1.netTrips) : 0,
+      avgFuel2: t2.netTrips > 0 ? (t2.netDiesel / t2.netTrips) : 0,
+      rate1: t1.dieselForRate > 0 ? (t1.amount / t1.dieselForRate) : 0,
+      rate2: t2.dieselForRate > 0 ? (t2.amount / t2.dieselForRate) : 0
     };
   };
 
   const handleExportExcel = () => {
-    // 1. Prepare Main Data Rows
-    const dataRows = aggregatedData.map((g, i) => {
+    // FIX: Define workbook immediately to prevent ReferenceError
+    const wb = XLSX.utils.book_new();
+
+    const dataRows = aggregatedData.map((g: any, i: number) => {
        const tripsToday = g.entries;
-       const netTrips = tripsToday + g.tripAdjustment;
+       const avgPerTrip = g.netTrips > 0 ? (g.netDiesel / g.netTrips) : 0;
+       const avgLoadTrip = tripsToday > 0 ? (g.netWeight/tripsToday) : 0;
        const totalAdj = g.dieselAdjustment + g.airAdjustment;
-       const netDiesel = g.diesel + g.advanceFromYesterday - totalAdj;
-       const avgPerTrip = netTrips > 0 ? (netDiesel / netTrips) : 0;
-       const totalNetWeight = g.netWeight;
-       const avgLoadTrip = tripsToday > 0 ? (totalNetWeight/tripsToday) : 0;
 
        return [
           i + 1,
@@ -331,14 +340,14 @@ const CoalTransport: React.FC<CoalTransportProps> = ({
           g.syncedDriver || 'PENDING',
           tripsToday,
           g.tripAdjustment,
-          netTrips,
+          g.netTrips,
           Number((g.grossWeightTotal / tripsToday).toFixed(3)),
-          Number(totalNetWeight.toFixed(3)),
+          Number(g.netWeight.toFixed(3)),
           Number(avgLoadTrip.toFixed(3)),
           Number(g.diesel.toFixed(3)),
           Number((-totalAdj).toFixed(3)),
           Number(g.advanceFromYesterday.toFixed(3)),
-          Number(netDiesel.toFixed(3)),
+          Number(g.netDiesel.toFixed(3)),
           Number(avgPerTrip.toFixed(3)),
           g.staffWelfare || 0,
           g.rollAmount || 0,
@@ -346,7 +355,6 @@ const CoalTransport: React.FC<CoalTransportProps> = ({
        ];
     });
 
-    // 2. Calculate Totals Row
     const totalTrips = dataRows.reduce((sum, row) => sum + row[6], 0);
     const totalNetTrips = dataRows.reduce((sum, row) => sum + row[8], 0);
     const totalNetWT = dataRows.reduce((sum, row) => sum + row[10], 0);
@@ -357,81 +365,46 @@ const CoalTransport: React.FC<CoalTransportProps> = ({
     const totalPay = dataRows.reduce((sum, row) => sum + (row[19] || 0), 0);
     const avgPerTripVal = dataRows.length > 0 ? (dataRows.reduce((sum, row) => sum + row[16], 0) / dataRows.length) : 0;
 
-    const uniqueTrucks = new Set(aggregatedData.map(g => g.plateNumber)).size;
+    const uniqueTrucks = new Set(aggregatedData.map((g: any) => g.plateNumber)).size;
     
-    // Exact mapping: A=0, B=1, G=6, I=8, K=10, M=12, P=15, Q=16
     const totalsRow = [
-       'TOTAL/AGGREGATION>>',   // A: 0
-       `${uniqueTrucks} vehicles`, // B: 1
-       '', '', '', '',          // C:2, D:3, E:4, F:5
-       totalTrips,               // G: 6
-       '',                       // H: 7
-       totalNetTrips,            // I: 8
-       '',                       // J: 9
-       Number(totalNetWT.toFixed(3)), // K: 10
-       '',                       // L: 11
-        totalDieselRec.toFixed(3), // M: 12
-        '',                       // N: 13
-        '',                       // O: 14
-        totalNetDiesel.toFixed(3), // P: 15
-        avgPerTripVal.toFixed(3),   // Q: 16
-        totalWelf,                // R: 17
-        totalRoll,                // S: 18
-        totalPay                  // T: 19
+       'TOTAL/AGGREGATION>>', `${uniqueTrucks} vehicles`, '', '', '', '',
+       totalTrips, '', totalNetTrips, '', Number(totalNetWT.toFixed(3)), '',
+        totalDieselRec.toFixed(3), '', '', totalNetDiesel.toFixed(3), avgPerTripVal.toFixed(3),
+        totalWelf, totalRoll, totalPay
      ];
 
-    // 3. Headers
      const headers = [
         ['S.No', 'Date', 'Wheels', 'Filling Type', 'Vehicle No', 'Driver', 'Trips', 'Trips Adj', 'Net Trips', 
          'Gross (Avg)', 'Net WT', 'Avg Load', 'Diesel', 'Adj', 
          'Stock Adv', 'Net D', 'Avg Lite', 'Welf', 'Roll', 'Payable']
      ];
 
-    // 4. Collect Adjustments
-    const adjustments = aggregatedData.filter(g => 
-       g.tripAdjustment !== 0 || g.dieselAdjustment !== 0 || g.airAdjustment !== 0 || g.advanceFromYesterday > 0
-    ).map(g => {
-       const remarks = [];
-       if (g.tripRemarks) remarks.push(g.tripRemarks);
-       if (g.dieselRemarks) remarks.push(g.dieselRemarks);
-       if (g.airRemarks) remarks.push(g.airRemarks);
-       if (g.tripAdjustment !== 0) remarks.push(`${g.tripAdjustment} TRIP ADJUSTED`);
-       if (g.advanceFromYesterday > 0) remarks.push(`${g.advanceFromYesterday} LTR STOCK ADVANCE`);
-       if (g.dieselAdjustment !== 0 || g.airAdjustment !== 0) {
-          const totalAdj = g.dieselAdjustment + g.airAdjustment;
-          remarks.push(`${totalAdj.toFixed(3)} LITRE USE IN AIR`);
-       }
-       
-       return ['', formatDate(g.date), g.plateNumber, remarks.join(', ').toUpperCase(), '', ''];
-    });
+    let adjustments: any[] = [];
+    if (reportOptions.remarks) {
+       adjustments = aggregatedData.filter((g: any) => 
+          g.tripAdjustment !== 0 || g.dieselAdjustment !== 0 || g.airAdjustment !== 0 || g.advanceFromYesterday > 0
+       ).map((g: any) => {
+          const remarks = [];
+          if (g.tripRemarks) remarks.push(g.tripRemarks);
+          if (g.dieselRemarks) remarks.push(g.dieselRemarks);
+          if (g.airRemarks) remarks.push(g.airRemarks);
+          if (g.tripAdjustment !== 0) remarks.push(`${g.tripAdjustment} TRIP ADJUSTED`);
+          if (g.advanceFromYesterday > 0) remarks.push(`${g.advanceFromYesterday} LTR STOCK ADVANCE`);
+          if (g.dieselAdjustment !== 0 || g.airAdjustment !== 0) {
+             const totalAdj = g.dieselAdjustment + g.airAdjustment;
+             remarks.push(`${totalAdj.toFixed(3)} LITRE USE IN AIR`);
+          }
+          return ['', formatDate(g.date), g.plateNumber, remarks.join(', ').toUpperCase(), '', ''];
+       });
+    }
 
-    // 5. MTD Analytics - COAL VEHICLES ONLY
     const mtd = calculateMTD();
     
-    // 6. Build the sheet
     const allRows = [...headers, ...dataRows, totalsRow];
-    
-    // Add gap rows
     allRows.push([''], ['']);
-    
     const sectionsStartRow = allRows.length;
     
-    // Section Headers (Row 1 of bottom tables)
-    const subHeaderRow = new Array(20).fill('');
-    subHeaderRow[1] = 'REMARKS AND ADJUSTMENTS';
-    subHeaderRow[9] = 'MTD ANALYTICS (MONTH START TO TODAY)';
-    subHeaderRow[15] = 'MTD ANALYTICS (MONTH START TO TODAY)';
-    allRows.push(subHeaderRow);
-    
-    // Column Headers (Row 2 of bottom tables)
-    const subColHeaders = new Array(20).fill('');
-    subColHeaders[1] = 'DATE'; subColHeaders[2] = 'VEHICLE NO.'; subColHeaders[3] = 'REMARKS';
-    subColHeaders[9] = 'Category'; subColHeaders[11] = mtd.range1Label; subColHeaders[12] = mtd.range2Label; subColHeaders[13] = 'Total';
-    subColHeaders[15] = 'Category'; subColHeaders[17] = 'Jan to 12 Feb'; subColHeaders[18] = '13 Feb'; subColHeaders[19] = 'Total'; // Placeholders, will use dynamic labels
-    // Use dynamic labels for Diesel table too
-    subColHeaders[17] = mtd.range1Label; subColHeaders[18] = mtd.range2Label; subColHeaders[19] = 'Total';
-    allRows.push(subColHeaders);
-
     const mtdDataTonnage = [
       ['Metric Tonnage (MT)', Number(mtd.net1.toFixed(3)), Number(mtd.net2.toFixed(3)), Number((mtd.net1 + mtd.net2).toFixed(3))],
       ['Avg Load/Trip (MT)', Number(mtd.avgLoad1.toFixed(3)), Number(mtd.avgLoad2.toFixed(3)), Number(((mtd.avgLoad1 + mtd.avgLoad2) / 2).toFixed(3))],
@@ -445,40 +418,52 @@ const CoalTransport: React.FC<CoalTransportProps> = ({
     ];
 
     const financialTotals = [
-      ['FINANCIAL TOTALS (₹)', ''], // Header row for financials
+      ['FINANCIAL TOTALS (₹)', ''], 
       ['Staff Welfare Total', totalWelf],
       ['Roll Amount Total', totalRoll],
       ['Grand Driver Payable', totalPay]
     ];
+
+    let maxDataRows = 0;
+    if (reportOptions.remarks) maxDataRows = Math.max(maxDataRows, adjustments.length);
+    if (reportOptions.tonnage || reportOptions.diesel) maxDataRows = Math.max(maxDataRows, 3);
+    if (reportOptions.financials) maxDataRows = Math.max(maxDataRows, 7); 
+
+    const subHeaderRow = new Array(20).fill('');
+    const subColHeaders = new Array(20).fill('');
+
+    if (reportOptions.remarks) {
+       subHeaderRow[1] = 'REMARKS AND ADJUSTMENTS';
+       subColHeaders[1] = 'DATE'; subColHeaders[2] = 'VEHICLE NO.'; subColHeaders[3] = 'REMARKS';
+    }
+    if (reportOptions.tonnage) {
+       subHeaderRow[9] = 'MTD ANALYTICS (MONTH START TO TODAY)';
+       subColHeaders[9] = 'Category'; subColHeaders[11] = mtd.range1Label; subColHeaders[12] = mtd.range2Label; subColHeaders[13] = 'Total';
+    }
+    if (reportOptions.diesel) {
+       subHeaderRow[15] = 'MTD ANALYTICS (MONTH START TO TODAY)';
+       subColHeaders[15] = 'Category'; subColHeaders[17] = mtd.range1Label; subColHeaders[18] = mtd.range2Label; subColHeaders[19] = 'Total';
+    }
+
+    if (maxDataRows > 0) {
+       allRows.push(subHeaderRow);
+       allRows.push(subColHeaders);
+    }
     
-    const maxDataRows = Math.max(adjustments.length, 7); // 3 (Tonnage) + 4 (Financials)
     for (let i = 0; i < maxDataRows; i++) {
        const row = new Array(20).fill('');
-       // T1: Remarks (Cols 1, 2, 3-7)
-       if (i < adjustments.length) {
-          row[1] = adjustments[i][1]; 
-          row[2] = adjustments[i][2]; 
-          row[3] = adjustments[i][3]; 
+       if (reportOptions.remarks && i < adjustments.length) {
+          row[1] = adjustments[i][1]; row[2] = adjustments[i][2]; row[3] = adjustments[i][3]; 
        }
-       // T2: Tonnage (Cols 9-13)
-       if (i < 3) {
-          row[9] = mtdDataTonnage[i][0];
-          row[11] = mtdDataTonnage[i][1];
-          row[12] = mtdDataTonnage[i][2];
-          row[13] = mtdDataTonnage[i][3];
+       if (reportOptions.tonnage && i < 3) {
+          row[9] = mtdDataTonnage[i][0]; row[11] = mtdDataTonnage[i][1]; row[12] = mtdDataTonnage[i][2]; row[13] = mtdDataTonnage[i][3];
        }
-       // T3: Diesel (Cols 15-19)
-       if (i < 3) {
-          row[15] = mtdDataDiesel[i][0];
-          row[17] = mtdDataDiesel[i][1];
-          row[18] = mtdDataDiesel[i][2];
-          row[19] = mtdDataDiesel[i][3];
+       if (reportOptions.diesel && i < 3) {
+          row[15] = mtdDataDiesel[i][0]; row[17] = mtdDataDiesel[i][1]; row[18] = mtdDataDiesel[i][2]; row[19] = mtdDataDiesel[i][3];
        }
-       // T4: Financials (Below T3)
-       if (i >= 3 && i < 7) {
+       if (reportOptions.financials && i >= 3 && i < 7) {
           const finIdx = i - 3;
-          row[15] = financialTotals[finIdx][0];
-          row[19] = financialTotals[finIdx][1];
+          row[15] = financialTotals[finIdx][0]; row[19] = financialTotals[finIdx][1];
        }
        allRows.push(row);
     }
@@ -488,37 +473,33 @@ const CoalTransport: React.FC<CoalTransportProps> = ({
     ws['!cols'] = [
       {wch: 5},  {wch: 12}, {wch: 15}, {wch: 30}, {wch: 5}, {wch: 5}, 
       {wch: 6},  {wch: 8},  {wch: 8},  {wch: 12}, {wch: 12}, {wch: 14},
-      {wch: 12}, {wch: 5},  {wch: 10}, {wch: 10}, {wch: 10}, {wch: 8}, {wch: 8}, {wch: 10} // Added for Welf, Roll, Payable
+      {wch: 12}, {wch: 5},  {wch: 10}, {wch: 10}, {wch: 10}, {wch: 8}, {wch: 8}, {wch: 10} 
     ];
 
     const merges = [];
-    // T1: Remarks Header (B1 to H1)
-    merges.push({ s: { r: sectionsStartRow, c: 1 }, e: { r: sectionsStartRow, c: 7 } });
-    // T2: Tonnage Header (J1 to N1)
-    merges.push({ s: { r: sectionsStartRow, c: 9 }, e: { r: sectionsStartRow, c: 13 } });
-    // T3: Diesel Header (P1 to T1)
-    merges.push({ s: { r: sectionsStartRow, c: 15 }, e: { r: sectionsStartRow, c: 19 } });
+    if (reportOptions.remarks) merges.push({ s: { r: sectionsStartRow, c: 1 }, e: { r: sectionsStartRow, c: 7 } });
+    if (reportOptions.tonnage) merges.push({ s: { r: sectionsStartRow, c: 9 }, e: { r: sectionsStartRow, c: 13 } });
+    if (reportOptions.diesel) merges.push({ s: { r: sectionsStartRow, c: 15 }, e: { r: sectionsStartRow, c: 19 } });
 
-    // T1: Content Merges (Remarks D to H)
-    for (let i = 0; i < adjustments.length; i++) {
-       merges.push({ s: { r: sectionsStartRow + 2 + i, c: 3 }, e: { r: sectionsStartRow + 2 + i, c: 7 } });
+    if (reportOptions.remarks) {
+       for (let i = 0; i < adjustments.length; i++) {
+          merges.push({ s: { r: sectionsStartRow + 2 + i, c: 3 }, e: { r: sectionsStartRow + 2 + i, c: 7 } });
+       }
     }
 
-    // T2 & T3 Category Merges
-    for (let i = 0; i < 3; i++) {
-       // Tonnage Category (J to K)
-       merges.push({ s: { r: sectionsStartRow + 2 + i, c: 9 }, e: { r: sectionsStartRow + 2 + i, c: 10 } });
-       // Diesel Category (P to Q)
-       merges.push({ s: { r: sectionsStartRow + 2 + i, c: 15 }, e: { r: sectionsStartRow + 2 + i, c: 16 } });
+    if (reportOptions.tonnage || reportOptions.diesel) {
+       for (let i = 0; i < 3; i++) {
+          if (reportOptions.tonnage) merges.push({ s: { r: sectionsStartRow + 2 + i, c: 9 }, e: { r: sectionsStartRow + 2 + i, c: 10 } });
+          if (reportOptions.diesel) merges.push({ s: { r: sectionsStartRow + 2 + i, c: 15 }, e: { r: sectionsStartRow + 2 + i, c: 16 } });
+       }
     }
 
-    // T4: Financials Header & Category Merges
-    const finStartRow = sectionsStartRow + 2 + 3; // After the 3 MTD rows
-    // Financials Header (P to T)
-    merges.push({ s: { r: finStartRow, c: 15 }, e: { r: finStartRow, c: 19 } });
-    for (let i = 1; i < 4; i++) {
-       // Category Label (P to S), Value in T
-       merges.push({ s: { r: finStartRow + i, c: 15 }, e: { r: finStartRow + i, c: 18 } });
+    if (reportOptions.financials) {
+       const finStartRow = sectionsStartRow + 2 + 3; 
+       merges.push({ s: { r: finStartRow, c: 15 }, e: { r: finStartRow, c: 19 } });
+       for (let i = 1; i < 4; i++) {
+          merges.push({ s: { r: finStartRow + i, c: 15 }, e: { r: finStartRow + i, c: 18 } });
+       }
     }
     
     ws['!merges'] = merges;
@@ -530,7 +511,7 @@ const CoalTransport: React.FC<CoalTransportProps> = ({
        right: { style: "thin", color: { rgb: "000000" } }
     };
     
-    for (let col = 0; col < 20; col++) { // Changed to 20 columns
+    for (let col = 0; col < 20; col++) {
        const cellRef = XLSX.utils.encode_cell({ r: 0, c: col });
        if (!ws[cellRef]) continue;
        ws[cellRef].s = {
@@ -541,109 +522,320 @@ const CoalTransport: React.FC<CoalTransportProps> = ({
        };
     }
     
-    // Apply styling to ALL cells in the bottom sections
     for (let r = sectionsStartRow; r < allRows.length; r++) {
-       for (let c = 0; c < 20; c++) {
-          const cellRef = XLSX.utils.encode_cell({ r, c });
-          if (!ws[cellRef]) ws[cellRef] = { v: '', t: 's' };
-          
-          const cell = ws[cellRef];
-          cell.s = { ...cell.s, border: borderStyle };
-
-          // Headers styling
-          if (r === sectionsStartRow) {
-             cell.s = {
-                ...cell.s,
-                font: { bold: true, color: { rgb: "FFFFFF" } },
-                fill: { fgColor: { rgb: "000000" } },
-                alignment: { horizontal: "center" }
-             };
-          }
-          // Column Headers (DATE, Category, etc.)
-          else if (r === sectionsStartRow + 1) {
-             cell.s = { ...cell.s, font: { bold: true }, fill: { fgColor: { rgb: "F1F5F9" } } };
+       const isHeader = r === sectionsStartRow;
+       const isColHeader = r === sectionsStartRow + 1;
+       const isContent = r > sectionsStartRow + 1;
+       
+       if (reportOptions.remarks) {
+          for (let c = 1; c <= 7; c++) {
+             const cellRef = XLSX.utils.encode_cell({ r, c });
+             if (!ws[cellRef]) ws[cellRef] = { v: '', t: 's' };
+             const cell = ws[cellRef];
+             
+             if (isContent && (!adjustments.length || r >= sectionsStartRow + 2 + adjustments.length)) continue;
+             if (isHeader || isColHeader || (isContent && r < sectionsStartRow + 2 + adjustments.length)) {
+                cell.s = { ...cell.s, border: borderStyle };
+             }
+             if (isHeader) cell.s = { ...cell.s, font: { bold: true, color: { rgb: "FFFFFF" } }, fill: { fgColor: { rgb: "000000" } }, alignment: { horizontal: "center" } };
+             else if (isColHeader) cell.s = { ...cell.s, font: { bold: true }, fill: { fgColor: { rgb: "F1F5F9" } }, alignment: { horizontal: "center" } };
           }
        }
-    }
+
+       if (reportOptions.tonnage) {
+          const mtdRows = 3;
+          if (r < sectionsStartRow + 2 + mtdRows) {
+              for (let c = 9; c <= 13; c++) {
+                  const cellRef = XLSX.utils.encode_cell({ r, c });
+                  if (!ws[cellRef]) ws[cellRef] = { v: '', t: 's' };
+                  const cell = ws[cellRef];
+                  cell.s = { ...cell.s, border: borderStyle };
+                  if (r === sectionsStartRow) cell.s = { ...cell.s, font: { bold: true, color: { rgb: "FFFFFF" } }, fill: { fgColor: { rgb: "000000" } }, alignment: { horizontal: "center" } };
+                  else if (r === sectionsStartRow + 1) cell.s = { ...cell.s, font: { bold: true }, fill: { fgColor: { rgb: "F1F5F9" } } };
+              }
+          }
+       }
     
-    const totalsIdx = dataRows.length + 1;
-    for (let col = 0; col < 20; col++) { // Changed to 20 columns
-       const cellRef = XLSX.utils.encode_cell({ r: totalsIdx, c: col });
-       if (!ws[cellRef]) continue;
-       ws[cellRef].s = {
-          font: { bold: true },
-          fill: { fgColor: { rgb: "F0F0F0" } },
-          alignment: { horizontal: col <= 1 ? "left" : "right" },
-          border: borderStyle
-       };
-    }
-    
-    [1, 12].forEach(col => {
-       const cellRef = XLSX.utils.encode_cell({ r: sectionsStartRow, c: col });
-       if (!ws[cellRef]) return;
-       ws[cellRef].s = {
-          font: { bold: true, color: { rgb: "FFFFFF" } },
-          fill: { fgColor: { rgb: "333333" } },
-          alignment: { horizontal: "center" },
-          border: borderStyle
-       };
-    });
-    
-    [1, 2, 3, 12, 14, 15, 16].forEach(col => {
-       const cellRef = XLSX.utils.encode_cell({ r: sectionsStartRow + 1, c: col });
-       if (!ws[cellRef]) return;
-       ws[cellRef].s = {
-          font: { bold: true, color: { rgb: "FFFFFF" } },
-          fill: { fgColor: { rgb: "333333" } },
-          alignment: { horizontal: "center" },
-          border: borderStyle
-       };
-    });
-    
-    for (let i = 0; i < maxDataRows; i++) {
-        const rowIdx = sectionsStartRow + 2 + i;
-        [1, 2, 3, 12, 14, 15, 16].forEach(col => {
-           const cellRef = XLSX.utils.encode_cell({ r: rowIdx, c: col });
-           if (!ws[cellRef]) return;
-           ws[cellRef].s = {
-              alignment: { horizontal: (col === 12 || col === 1) ? "center" : (col > 13 ? "right" : "left") },
-              border: borderStyle
-           };
-        });
-        // Special styling for financial totals in MTD section
-        if (i === 3) {
-           const cellRef = XLSX.utils.encode_cell({ r: rowIdx, c: 15 });
-           if (ws[cellRef]) {
-              ws[cellRef].s = {
-                 font: { bold: true, color: { rgb: "FFFFFF" } },
-                 fill: { fgColor: { rgb: "333333" } },
-                 alignment: { horizontal: "center" },
-                 border: borderStyle
-              };
+       if (reportOptions.diesel || reportOptions.financials) {
+           const mtdRows = 3;
+           const finRows = 4;
+           let paint = false;
+           if (reportOptions.diesel && r < sectionsStartRow + 2 + mtdRows) paint = true;
+           if (reportOptions.financials && r >= sectionsStartRow + 2 + mtdRows && r < sectionsStartRow + 2 + mtdRows + finRows) paint = true;
+
+           if (paint) {
+              for (let c = 15; c <= 19; c++) {
+                  const cellRef = XLSX.utils.encode_cell({ r, c });
+                  if (!ws[cellRef]) ws[cellRef] = { v: '', t: 's' };
+                  const cell = ws[cellRef];
+                  cell.s = { ...cell.s, border: borderStyle };
+                  
+                  if (r === sectionsStartRow && reportOptions.diesel) {
+                     cell.s = { ...cell.s, font: { bold: true, color: { rgb: "FFFFFF" } }, fill: { fgColor: { rgb: "000000" } }, alignment: { horizontal: "center" } };
+                  } else if (r === sectionsStartRow + 1 && reportOptions.diesel) {
+                     cell.s = { ...cell.s, font: { bold: true }, fill: { fgColor: { rgb: "F1F5F9" } } };
+                  } else if (r === sectionsStartRow + 2 + mtdRows && reportOptions.financials) {
+                     cell.s = { ...cell.s, font: { bold: true, color: { rgb: "FFFFFF" } }, fill: { fgColor: { rgb: "000000" } }, alignment: { horizontal: "center" } };
+                  }
+              }
            }
-        }
-        if (i > 3 && i < 7) {
-           const cellRefCategory = XLSX.utils.encode_cell({ r: rowIdx, c: 15 });
-           const cellRefTotal = XLSX.utils.encode_cell({ r: rowIdx, c: 19 });
-           if (ws[cellRefCategory]) {
-              ws[cellRefCategory].s = {
-                 font: { bold: true },
-                 alignment: { horizontal: "left" },
-                 border: borderStyle
-              };
-           }
-           if (ws[cellRefTotal]) {
-              ws[cellRefTotal].s = {
-                 font: { bold: true },
-                 alignment: { horizontal: "right" },
-                 border: borderStyle
-              };
-           }
-        }
+       }
     }
 
-    const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Coal Transport Audit");
+
+    // UNMAPPED FUEL SHEET (FIXED: Uses lax date filter to ensure generation)
+    if (reportOptions.unmapped) {
+       // FIX: If no dates selected, use very wide range to ensure we capture unmapped data
+       const reportStartDateStr = startDate || '1970-01-01';
+       const reportEndDateStr = endDate || '2099-12-31';
+       
+       let relevantFuelLogs = fuelLogs;
+       if (truckFilter || searchQuery) {
+          relevantFuelLogs = fuelLogs.filter(f => {
+             const t = trucks.find(tr => tr.id === f.truckId);
+             if (!t) return false;
+             if (truckFilter && t.id !== truckFilter) return false;
+             if (searchQuery && !t.plateNumber.toLowerCase().includes(searchQuery.toLowerCase())) return false;
+             return true;
+          });
+       }
+
+       const unmappedFuelLogs = relevantFuelLogs.filter(f => {
+          const d = f.attributionDate || f.date;
+          const isInReportRange = d >= reportStartDateStr && d <= reportEndDateStr;
+          if (!isInReportRange) return false;
+          
+          let relevantCoalLogs = logs;
+          if (truckFilter || searchQuery) {
+             relevantCoalLogs = logs.filter(l => {
+                const t = trucks.find(tr => tr.id === l.truckId);
+                if (!t) return false;
+                if (truckFilter && t.id !== truckFilter) return false;
+                if (searchQuery && !t.plateNumber.toLowerCase().includes(searchQuery.toLowerCase())) return false;
+                return true;
+             });
+          }
+          const isMapped = relevantCoalLogs.some(l => l.truckId === f.truckId && l.date === d);
+          return !isMapped;
+       });
+
+       if (unmappedFuelLogs.length > 0) {
+          const unmappedHeader = ['Date', 'Attribution Date', 'Vehicle', 'Driver', 'Liters', 'Price', 'Amount', 'Station', 'Type'];
+          const unmappedRows = unmappedFuelLogs.map(f => {
+             const truck = trucks.find(t => t.id === f.truckId);
+             const driver = drivers.find(d => d.id === f.driverId);
+             const station = f.stationId ? (currentUser?.masterData?.fuelStations?.find((s: any) => s.id === f.stationId)?.name || f.stationId) : 'N/A';
+             return [
+                formatDate(f.date),
+                formatDate(f.attributionDate),
+                truck?.plateNumber || 'Unknown',
+                driver?.name || 'Unknown',
+                f.fuelLiters,
+                f.dieselPrice,
+                (f.fuelLiters * (f.dieselPrice || 0)).toFixed(2),
+                station,
+                f.entryType
+             ];
+          });
+          
+          const wsUnmapped = XLSX.utils.aoa_to_sheet([unmappedHeader, ...unmappedRows]);
+          const range = XLSX.utils.decode_range(wsUnmapped['!ref'] || 'A1');
+          for (let c = range.s.c; c <= range.e.c; ++c) {
+             const ref = XLSX.utils.encode_cell({ r: 0, c });
+             if (!wsUnmapped[ref]) continue;
+             wsUnmapped[ref].s = { font: { bold: true }, fill: { fgColor: { rgb: "E0E0E0" } } };
+          }
+          wsUnmapped['!cols'] = [{wch:12}, {wch:12}, {wch:15}, {wch:20}, {wch:10}, {wch:10}, {wch:12}, {wch:20}, {wch:12}];
+          
+          XLSX.utils.book_append_sheet(wb, wsUnmapped, "Unmapped Fuel");
+       }
+    }
+
+    // TRIP DETAILS SHEET (FIXED: Uses lax date filter to ensure generation)
+    if (reportOptions.tripDetails) {
+       const reportStartDateStr = startDate || '1970-01-01';
+       const reportEndDateStr = endDate || '2099-12-31';
+       
+       let detailLogs = logs.filter(l => {
+          const d = l.date;
+          return d >= reportStartDateStr && d <= reportEndDateStr;
+       });
+
+       if (truckFilter || searchQuery) {
+          const matchingTruckIds = trucks
+            .filter(t => {
+               if (truckFilter && t.id !== truckFilter) return false;
+               if (searchQuery && !t.plateNumber.toLowerCase().includes(searchQuery.toLowerCase())) return false;
+               return true;
+            })
+            .map(t => t.id);
+          detailLogs = detailLogs.filter(l => matchingTruckIds.includes(l.truckId));
+       }
+
+       detailLogs.sort((a, b) => {
+          if (a.truckId === b.truckId) {
+             return new Date(a.date).getTime() - new Date(b.date).getTime();
+          }
+          return a.truckId.localeCompare(b.truckId);
+       });
+
+       const detailHeaders = [];
+       if (columnOptions.date) detailHeaders.push('Date');
+       if (columnOptions.truck) detailHeaders.push('Vehicle No');
+       if (columnOptions.driver) detailHeaders.push('Driver');
+       if (columnOptions.passNo) detailHeaders.push('Pass No');
+       if (columnOptions.material) detailHeaders.push('Material');
+       if (columnOptions.grossWt) detailHeaders.push('Gross Wt');
+       if (columnOptions.tareWt) detailHeaders.push('Tare Wt');
+       if (columnOptions.netWt) detailHeaders.push('Net Wt');
+       if (columnOptions.diesel) detailHeaders.push('Diesel (L)');
+       if (columnOptions.rate) detailHeaders.push('Rate');
+       if (columnOptions.amount) detailHeaders.push('Amount');
+       if (columnOptions.remarks) detailHeaders.push('Remarks');
+
+       const detailRows: any[][] = [];
+       const merges: any[] = [];
+       
+       const logsByTruck: Record<string, typeof detailLogs> = {};
+       detailLogs.forEach(l => {
+           if (!logsByTruck[l.truckId]) logsByTruck[l.truckId] = [];
+           logsByTruck[l.truckId].push(l);
+       });
+
+       let sheetRowIndex = 1; 
+       
+       Object.keys(logsByTruck).forEach(tId => {
+           const truck = trucks.find(t => t.id === tId);
+           const tLogs = logsByTruck[tId];
+           
+           const truckHeaderRow = new Array(detailHeaders.length).fill('');
+           truckHeaderRow[0] = `VEHICLE NO:: ${truck?.plateNumber || 'Unknown'}`;
+           detailRows.push(truckHeaderRow);
+           merges.push({ s: { r: sheetRowIndex, c: 0 }, e: { r: sheetRowIndex, c: Math.max(0, detailHeaders.length - 1) } });
+           sheetRowIndex++;
+           
+           let truckTotalNetWt = 0;
+           let truckTotalDiesel = 0;
+           let truckTotalAmount = 0;
+           
+           const logsByDate: Record<string, typeof detailLogs> = {};
+           tLogs.forEach(l => {
+               if (!logsByDate[l.date]) logsByDate[l.date] = [];
+               logsByDate[l.date].push(l);
+           });
+           
+           const sortedDates = Object.keys(logsByDate).sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
+           
+           sortedDates.forEach(date => {
+               const tripsOnDate = logsByDate[date];
+               const fuelOnDate = fuelLogs.filter(f => f.truckId === tId && (f.attributionDate || f.date) === date);
+               
+               const maxRows = Math.max(tripsOnDate.length, fuelOnDate.length);
+               
+               for (let i = 0; i < maxRows; i++) {
+                   const trip = tripsOnDate[i];
+                   const fuel = fuelOnDate[i];
+                   const driver = trip ? drivers.find(d => d.id === trip.driverId) : (fuel ? drivers.find(d => d.id === fuel.driverId) : null);
+                   
+                   const row = [];
+                   if (columnOptions.date) row.push(formatDate(date));
+                   if (columnOptions.truck) row.push(truck?.plateNumber || '');
+                   if (columnOptions.driver) row.push(driver?.name || (trip ? 'Pending' : ''));
+                   if (columnOptions.passNo) row.push(trip ? trip.passNo : '');
+                   if (columnOptions.material) row.push(trip ? 'Coal' : '');
+                   if (columnOptions.grossWt) row.push(trip ? trip.grossWeight : '');
+                   if (columnOptions.tareWt) row.push(trip ? trip.tareWeight : '');
+                   if (columnOptions.netWt) {
+                      row.push(trip ? trip.netWeight : '');
+                      if (trip) truckTotalNetWt += (trip.netWeight || 0);
+                   }
+                   if (columnOptions.diesel) {
+                      row.push(fuel ? fuel.fuelLiters : 0);
+                      if (fuel) truckTotalDiesel += (fuel.fuelLiters || 0);
+                   }
+                   if (columnOptions.rate) row.push(fuel ? fuel.dieselPrice : (trip?.dieselRate || 0));
+                   if (columnOptions.amount) {
+                      const amount = fuel ? (fuel.fuelLiters * (fuel.dieselPrice || 0)) : 0;
+                      row.push(amount ? amount.toFixed(2) : 0);
+                      truckTotalAmount += amount;
+                   }
+                   if (columnOptions.remarks) {
+                      const remarks = [];
+                      if (trip?.remarks) remarks.push(trip.remarks);
+                      if (trip?.dieselAdjustment) remarks.push(`${trip.dieselAdjustment}L Adj`);
+                      if (trip?.airAdjustment) remarks.push(`${trip.airAdjustment}L Air`);
+                      if (trip?.adjustment) remarks.push(`${trip.adjustment} Trip Adj`);
+                      if (fuel?.entryType === 'FULL_TANK') remarks.push('Full Tank');
+                      row.push(remarks.join(', '));
+                   }
+                   
+                   detailRows.push(row);
+                   sheetRowIndex++;
+               }
+           });
+           
+           const subTotalRow = new Array(detailHeaders.length).fill('');
+           let cIdx = 0;
+           if (columnOptions.date) cIdx++;
+           if (columnOptions.truck) cIdx++;
+           if (columnOptions.driver) cIdx++;
+           if (columnOptions.passNo) cIdx++;
+           if (columnOptions.material) cIdx++;
+           if (columnOptions.grossWt) cIdx++;
+           if (columnOptions.tareWt) cIdx++;
+           if (columnOptions.netWt) {
+              subTotalRow[cIdx] = Number(truckTotalNetWt.toFixed(3)); 
+              cIdx++;
+           }
+           if (columnOptions.diesel) {
+              subTotalRow[cIdx] = Number(truckTotalDiesel.toFixed(2));
+              cIdx++;
+           }
+           if (columnOptions.rate) cIdx++;
+           if (columnOptions.amount) {
+              subTotalRow[cIdx] = Number(truckTotalAmount.toFixed(2));
+              cIdx++;
+           }
+           
+           detailRows.push(subTotalRow);
+           sheetRowIndex++;
+       });
+
+       if (detailRows.length > 0) {
+          const wsDetails = XLSX.utils.aoa_to_sheet([detailHeaders, ...detailRows]);
+          const range = XLSX.utils.decode_range(wsDetails['!ref'] || 'A1');
+          
+          for (let c = range.s.c; c <= range.e.c; ++c) {
+             const ref = XLSX.utils.encode_cell({ r: 0, c });
+             if (!wsDetails[ref]) continue;
+             wsDetails[ref].s = { font: { bold: true }, fill: { fgColor: { rgb: "E0E0E0" } } };
+          }
+          
+          detailRows.forEach((row, idx) => {
+             const sRowIdx = idx + 1;
+             const isVehicleHeader = row[0] && String(row[0]).startsWith('VEHICLE NO::');
+             const isSubtotal = !isVehicleHeader && String(row[0]) === '' && String(row[1]) === ''; 
+             
+             if (isVehicleHeader || isSubtotal) {
+                for (let c = range.s.c; c <= range.e.c; ++c) {
+                   const ref = XLSX.utils.encode_cell({ r: sRowIdx, c });
+                   if (!wsDetails[ref]) wsDetails[ref] = { v: '', t: 's' };
+                   wsDetails[ref].s = { ...wsDetails[ref].s, font: { bold: true } };
+                   if (isVehicleHeader) {
+                      wsDetails[ref].s.fill = { fgColor: { rgb: "CCCCCC" } };
+                   }
+                }
+             }
+          });
+          
+          wsDetails['!merges'] = merges;
+          wsDetails['!cols'] = detailHeaders.map(() => ({ wch: 15 }));
+          
+          XLSX.utils.book_append_sheet(wb, wsDetails, "Trip Details");
+       }
+    }
+
     XLSX.writeFile(wb, `Coal_Audit_${formatDate(startDate)}_to_${formatDate(endDate)}.xlsx`);
   };
 
@@ -667,10 +859,7 @@ const CoalTransport: React.FC<CoalTransportProps> = ({
      // MAIN TABLE DATA
      const tableBody = aggregatedData.map((g, i) => {
        const tripsToday = g.entries;
-       const netTrips = tripsToday + g.tripAdjustment;
-       const totalAdj = g.dieselAdjustment + g.airAdjustment;
-       const netDiesel = g.diesel + g.advanceFromYesterday - totalAdj;
-       const avgPerTrip = netTrips > 0 ? (netDiesel / netTrips) : 0;
+       const avgPerTrip = g.netTrips > 0 ? (g.netDiesel / g.netTrips) : 0;
        const avgLoadTrip = tripsToday > 0 ? (g.netWeight/tripsToday) : 0;
 
        return [
@@ -682,14 +871,14 @@ const CoalTransport: React.FC<CoalTransportProps> = ({
           g.syncedDriver || '-',
           tripsToday,
           g.tripAdjustment || '',
-          netTrips,
+          g.netTrips,
           (g.grossWeightTotal / tripsToday).toFixed(3),
           g.netWeight.toFixed(3),
           avgLoadTrip.toFixed(3),
           g.diesel.toFixed(3),
-          (-totalAdj).toFixed(3) || '',
+          (-(g.dieselAdjustment + g.airAdjustment)).toFixed(3) || '',
           g.advanceFromYesterday || '',
-          netDiesel.toFixed(3),
+          g.netDiesel.toFixed(3),
           avgPerTrip.toFixed(3),
           g.staffWelfare || 0,
           g.rollAmount || 0,
@@ -707,7 +896,7 @@ const CoalTransport: React.FC<CoalTransportProps> = ({
       const totalRoll = tableBody.reduce((sum, row) => sum + (row[18] || 0), 0);
       const totalDriverPayable = tableBody.reduce((sum, row) => sum + (row[19] || 0), 0);
       const avgPerTripVal = tableBody.length > 0 ? (tableBody.reduce((sum, row) => sum + parseFloat(row[16]), 0) / tableBody.length) : 0;
-     const uniqueTrucks = new Set(aggregatedData.map(g => g.plateNumber)).size;
+     const uniqueTrucks = new Set(aggregatedData.map((g: any) => g.plateNumber)).size;
 
       const totalsRow = [
          'TOTAL/AGGREGATION>>',
@@ -769,119 +958,124 @@ const CoalTransport: React.FC<CoalTransportProps> = ({
      });
 
      let finalY = (doc as any).lastAutoTable.finalY + 10;
+     const sectionStartY = finalY;
      const remarksWidth = 85;
-     const tableGap = 7;
      const mtdWidth = 85;
-
-     // STACKED SECTIONS FOR ALIGNMENT
+     
      // 1. Remarks section
-     const adjustments = aggregatedData.filter(g => 
-        g.tripAdjustment !== 0 || g.dieselAdjustment !== 0 || g.airAdjustment !== 0 || g.advanceFromYesterday > 0
-     ).map(g => {
-        const remarks = [];
-        if (g.tripRemarks) remarks.push(g.tripRemarks);
-        if (g.dieselRemarks) remarks.push(g.dieselRemarks);
-        if (g.airRemarks) remarks.push(g.airRemarks);
-        if (g.tripAdjustment !== 0) remarks.push(`${g.tripAdjustment} TRIP ADJUSTED`);
-        if (g.advanceFromYesterday > 0) remarks.push(`${g.advanceFromYesterday} LTR STOCK ADVANCE`);
-        if (g.dieselAdjustment !== 0 || g.airAdjustment !== 0) {
-           const totalAdj = g.dieselAdjustment + g.airAdjustment;
-           remarks.push(`${totalAdj.toFixed(3)} LITRE USE IN AIR`);
-        }
-        return [formatDate(g.date), g.plateNumber, remarks.join(', ').toUpperCase()];
-     });
+     if (reportOptions.remarks) {
+        const adjustments = aggregatedData.filter((g: any) => 
+           g.tripAdjustment !== 0 || g.dieselAdjustment !== 0 || g.airAdjustment !== 0 || g.advanceFromYesterday > 0
+        ).map((g: any) => {
+           const remarks = [];
+           if (g.tripRemarks) remarks.push(g.tripRemarks);
+           if (g.dieselRemarks) remarks.push(g.dieselRemarks);
+           if (g.airRemarks) remarks.push(g.airRemarks);
+           if (g.tripAdjustment !== 0) remarks.push(`${g.tripAdjustment} TRIP ADJUSTED`);
+           if (g.advanceFromYesterday > 0) remarks.push(`${g.advanceFromYesterday} LTR STOCK ADVANCE`);
+           if (g.dieselAdjustment !== 0 || g.airAdjustment !== 0) {
+              const totalAdj = g.dieselAdjustment + g.airAdjustment;
+              remarks.push(`${totalAdj.toFixed(3)} LITRE USE IN AIR`);
+           }
+           return [formatDate(g.date), g.plateNumber, remarks.join(', ').toUpperCase()];
+        });
 
-     if (adjustments.length > 0) {
-        // @ts-ignore
-        doc.autoTable({
-           head: [['REMARKS AND ADJUSTMENTS']],
-           body: [],
-           startY: finalY, margin: { left: 14 }, tableWidth: remarksWidth, theme: 'grid',
-           headStyles: { fillColor: [0, 0, 0], textColor: 255, halign: 'center', fontStyle: 'bold' }
-        });
-        // @ts-ignore
-        doc.autoTable({
-           head: [['DATE', 'VEHICLE NO.', 'REMARKS']],
-           body: adjustments,
-           startY: (doc as any).lastAutoTable.finalY, margin: { left: 14 }, tableWidth: remarksWidth, theme: 'grid',
-           styles: { fontSize: 7, cellPadding: 1 },
-           headStyles: { fillColor: [241, 245, 249], textColor: 40, fontStyle: 'bold' },
-           columnStyles: { 0: { cellWidth: 20 }, 1: { cellWidth: 25 }, 2: { cellWidth: 40 } }
-        });
-        finalY = (doc as any).lastAutoTable.finalY + 10;
+        if (adjustments.length > 0) {
+           // @ts-ignore
+           doc.autoTable({
+              head: [['REMARKS AND ADJUSTMENTS']],
+              body: [],
+              startY: sectionStartY, margin: { left: 14 }, tableWidth: remarksWidth, theme: 'grid',
+              headStyles: { fillColor: [0, 0, 0], textColor: 255, halign: 'center', fontStyle: 'bold' }
+           });
+           // @ts-ignore
+           doc.autoTable({
+              head: [['DATE', 'VEHICLE NO.', 'REMARKS']],
+              body: adjustments,
+              startY: (doc as any).lastAutoTable.finalY, margin: { left: 14 }, tableWidth: remarksWidth, theme: 'grid',
+              styles: { fontSize: 7, cellPadding: 1 },
+              headStyles: { fillColor: [241, 245, 249], textColor: 40, fontStyle: 'bold' },
+              columnStyles: { 0: { cellWidth: 20 }, 1: { cellWidth: 25 }, 2: { cellWidth: 40 } }
+           });
+        }
      }
 
      // 2. MTD section
      const mtd = calculateMTD();
-      const mtdTonnagePDF = [
-         ['Metric Tonnage (MT)', mtd.net1.toFixed(3), mtd.net2.toFixed(3), (mtd.net1 + mtd.net2).toFixed(3)],
-         ['Avg Load/Trip (MT)', mtd.avgLoad1.toFixed(3), mtd.avgLoad2.toFixed(3), ((mtd.avgLoad1 + mtd.avgLoad2)/2).toFixed(3)],
-         ['Avg Diesel/Trip (L)', mtd.avgFuel1.toFixed(3), mtd.avgFuel2.toFixed(3), ((mtd.avgFuel1 + mtd.avgFuel2)/2).toFixed(3)]
-      ];
+     
+     if (reportOptions.tonnage) {
+        const mtdTonnagePDF = [
+           ['Metric Tonnage (MT)', mtd.net1.toFixed(3), mtd.net2.toFixed(3), (mtd.net1 + mtd.net2).toFixed(3)],
+           ['Avg Load/Trip (MT)', mtd.avgLoad1.toFixed(3), mtd.avgLoad2.toFixed(3), ((mtd.avgLoad1 + mtd.avgLoad2)/2).toFixed(3)],
+           ['Avg Diesel/Trip (L)', mtd.avgFuel1.toFixed(3), mtd.avgFuel2.toFixed(3), ((mtd.avgFuel1 + mtd.avgFuel2)/2).toFixed(3)]
+        ];
 
-      const mtdDieselPDF = [
-         ['Diesel Consumed (L)', mtd.fuel1.toFixed(3), mtd.fuel2.toFixed(3), (mtd.fuel1 + mtd.fuel2).toFixed(3)],
-         ['Amount Spent (₹)', mtd.amt1.toFixed(2), mtd.amt2.toFixed(2), (mtd.amt1 + mtd.amt2).toFixed(2)],
-         ['Diesel Rate (₹)', mtd.rate1.toFixed(2), mtd.rate2.toFixed(2), ((mtd.rate1 + mtd.rate2)/2).toFixed(2)]
-      ];
+        const tonerX = 14 + 85 + 7;
+        // @ts-ignore
+        doc.autoTable({
+           head: [['MTD ANALYTICS (TONNAGE)']],
+           body: [],
+           startY: sectionStartY, margin: { left: tonerX }, tableWidth: 85, theme: 'grid',
+           headStyles: { fillColor: [0, 0, 0], textColor: 255, halign: 'center', fontStyle: 'bold' }
+        });
+        // @ts-ignore
+        doc.autoTable({
+           head: [['Category', mtd.range1Label, mtd.range2Label, 'Total']],
+           body: mtdTonnagePDF,
+           startY: (doc as any).lastAutoTable.finalY, margin: { left: tonerX }, tableWidth: 85, theme: 'grid',
+           styles: { fontSize: 7, cellPadding: 1 },
+           headStyles: { fillColor: [241, 245, 249], textColor: 40, fontStyle: 'bold' },
+           columnStyles: { 0: { cellWidth: 35 }, 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right', fontStyle: 'bold' } }
+        });
+     }
 
-      // 2. Tonnage Table (Middle)
-      const tonerX = 14 + 85 + 7;
-      // @ts-ignore
-      doc.autoTable({
-         head: [['MTD ANALYTICS (TONNAGE)']],
-         body: [],
-         startY: finalY, margin: { left: tonerX }, tableWidth: 85, theme: 'grid',
-         headStyles: { fillColor: [0, 0, 0], textColor: 255, halign: 'center', fontStyle: 'bold' }
-      });
-      // @ts-ignore
-      doc.autoTable({
-         head: [['Category', mtd.range1Label, mtd.range2Label, 'Total']],
-         body: mtdTonnagePDF,
-         startY: (doc as any).lastAutoTable.finalY, margin: { left: tonerX }, tableWidth: 85, theme: 'grid',
-         styles: { fontSize: 7, cellPadding: 1 },
-         headStyles: { fillColor: [241, 245, 249], textColor: 40, fontStyle: 'bold' },
-         columnStyles: { 0: { cellWidth: 35 }, 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right', fontStyle: 'bold' } }
-      });
+     if (reportOptions.diesel) {
+         const mtdDieselPDF = [
+           ['Diesel Consumed (L)', mtd.fuel1.toFixed(3), mtd.fuel2.toFixed(3), (mtd.fuel1 + mtd.fuel2).toFixed(3)],
+           ['Amount Spent (₹)', mtd.amt1.toFixed(2), mtd.amt2.toFixed(2), (mtd.amt1 + mtd.amt2).toFixed(2)],
+           ['Diesel Rate (₹)', mtd.rate1.toFixed(2), mtd.rate2.toFixed(2), ((mtd.rate1 + mtd.rate2)/2).toFixed(2)]
+        ];
 
-      // 3. Diesel Table (Right)
-      const dieselX = tonerX + 85 + 7;
-      // @ts-ignore
-      doc.autoTable({
-         head: [['MTD ANALYTICS (DIESEL)']],
-         body: [],
-         startY: finalY, margin: { left: dieselX }, tableWidth: 85, theme: 'grid',
-         headStyles: { fillColor: [0, 0, 0], textColor: 255, halign: 'center', fontStyle: 'bold' }
-      });
-      // @ts-ignore
-      doc.autoTable({
-         head: [['Category', mtd.range1Label, mtd.range2Label, 'Total']],
-         body: mtdDieselPDF,
-         startY: (doc as any).lastAutoTable.finalY, margin: { left: dieselX }, tableWidth: 85, theme: 'grid',
-         styles: { fontSize: 7, cellPadding: 1 },
-         headStyles: { fillColor: [241, 245, 249], textColor: 40, fontStyle: 'bold' },
-         columnStyles: { 0: { cellWidth: 35 }, 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right', fontStyle: 'bold' } }
-      });
-
-      // 4. Financial Summary (Under Diesel)
-      // @ts-ignore
-      doc.autoTable({
-         head: [['FINANCIAL TOTALS (₹)']],
-         body: [],
-         startY: (doc as any).lastAutoTable.finalY + 5, margin: { left: dieselX }, tableWidth: 85, theme: 'grid',
-         headStyles: { fillColor: [0, 0, 0], textColor: 255, halign: 'center', fontStyle: 'bold' }
-      });
-      // @ts-ignore
-      doc.autoTable({
-         body: [
-            ['Staff Welfare Total', totalWelfare.toLocaleString()],
-            ['Roll Amount Total', totalRoll.toLocaleString()],
-            ['Grand Total Driver Payable', totalDriverPayable.toLocaleString()]
-         ],
-         startY: (doc as any).lastAutoTable.finalY, margin: { left: dieselX }, tableWidth: 85, theme: 'grid',
-         styles: { fontSize: 8, fontStyle: 'bold' },
-         columnStyles: { 0: { cellWidth: 55 }, 1: { halign: 'right' } }
-      });
+        const dieselX = 14 + 85 + 7 + 85 + 7; // Fixed position to match alignment
+        // @ts-ignore
+        doc.autoTable({
+           head: [['MTD ANALYTICS (DIESEL)']],
+           body: [],
+           startY: sectionStartY, margin: { left: dieselX }, tableWidth: 85, theme: 'grid',
+           headStyles: { fillColor: [0, 0, 0], textColor: 255, halign: 'center', fontStyle: 'bold' }
+        });
+        // @ts-ignore
+        doc.autoTable({
+           head: [['Category', mtd.range1Label, mtd.range2Label, 'Total']],
+           body: mtdDieselPDF,
+           startY: (doc as any).lastAutoTable.finalY, margin: { left: dieselX }, tableWidth: 85, theme: 'grid',
+           styles: { fontSize: 7, cellPadding: 1 },
+           headStyles: { fillColor: [241, 245, 249], textColor: 40, fontStyle: 'bold' },
+           columnStyles: { 0: { cellWidth: 35 }, 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right', fontStyle: 'bold' } }
+        });
+        
+        // 4. Financial Summary (Under Diesel)
+        if (reportOptions.financials) {
+           // @ts-ignore
+           doc.autoTable({
+              head: [['FINANCIAL TOTALS (₹)']],
+              body: [],
+              startY: (doc as any).lastAutoTable.finalY + 5, margin: { left: dieselX }, tableWidth: 85, theme: 'grid',
+              headStyles: { fillColor: [0, 0, 0], textColor: 255, halign: 'center', fontStyle: 'bold' }
+           });
+           // @ts-ignore
+           doc.autoTable({
+              body: [
+                 ['Staff Welfare Total', totalWelfare.toLocaleString()],
+                 ['Roll Amount Total', totalRoll.toLocaleString()],
+                 ['Grand Total Driver Payable', totalDriverPayable.toLocaleString()]
+              ],
+              startY: (doc as any).lastAutoTable.finalY, margin: { left: dieselX }, tableWidth: 85, theme: 'grid',
+              styles: { fontSize: 8, fontStyle: 'bold' },
+              columnStyles: { 0: { cellWidth: 55 }, 1: { halign: 'right' } }
+           });
+        }
+     }
 
      // FOOTER
      const pages = doc.internal.getNumberOfPages();
@@ -905,11 +1099,11 @@ const CoalTransport: React.FC<CoalTransportProps> = ({
   };
 
   const handleSaveBatchEdit = async () => {
-    const group = aggregatedData.find(g => g.key === batchEditKey);
+    const group = aggregatedData.find((g: any) => g.key === batchEditKey);
     if (group && (onUpdateLogs || onEdit)) {
       const { welfare, roll } = calculateBatchFinancials(group.logs.length, group.tripAdjustment);
       
-      const updatedLogs = group.logs.map((log, i) => ({
+      const updatedLogs = group.logs.map((log: any, i: number) => ({
         ...log,
         date: batchEditBuffer.date,
         from: batchEditBuffer.from,
@@ -940,13 +1134,12 @@ const CoalTransport: React.FC<CoalTransportProps> = ({
     const newTripAdj = field === 'trip' ? (parseFloat(adjEditValue) || 0) : selectedGroup.tripAdjustment;
     const { welfare, roll } = calculateBatchFinancials(selectedGroup.logs.length, newTripAdj);
 
-    const updatedLogs = selectedGroup.logs.map((log, i) => {
+    const updatedLogs = selectedGroup.logs.map((log: any, i: number) => {
       let updates: any = {};
       if (field === 'trip') updates = { adjustment: newTripAdj, tripRemarks: remarksBuffer };
       if (field === 'stock') updates = { dieselAdjustment: parseFloat(dieselAdjValue) || 0, dieselAdjType: 'STOCK', dieselRemarks: remarksBuffer };
       if (field === 'air') updates = { airAdjustment: parseFloat(dieselAdjValue) || 0, airRemarks: remarksBuffer };
       
-      // Always re-apply financial split on update to keep it fresh on the first row
       updates.staffWelfare = i === 0 ? welfare : 0;
       updates.rollAmount = i === 0 ? roll : 0;
       
@@ -977,11 +1170,9 @@ const CoalTransport: React.FC<CoalTransportProps> = ({
       const t = Number(editBuffer.tareWeight) || 0;
       const updatedLog = { ...(editBuffer as CoalLog), netWeight: Math.max(0, g - t) };
       
-      // Find position of this log in the group
       const logIdx = selectedGroup.logs.findIndex((l: CoalLog) => l.id === editingLogId);
       const { welfare, roll } = calculateBatchFinancials(selectedGroup.logs.length, selectedGroup.tripAdjustment);
       
-      // Apply correct financial values based on position
       updatedLog.staffWelfare = logIdx === 0 ? welfare : 0;
       updatedLog.rollAmount = logIdx === 0 ? roll : 0;
 
@@ -1020,16 +1211,8 @@ const CoalTransport: React.FC<CoalTransportProps> = ({
       rollAmount: 0    
     }));
 
-    // If adding more, we might need to update the EXISTING first row's financials if it was already saved
-    // For now, let's assume we update the first row of the NEWLY added batch as a placeholder or 
-    // better: have a "Refresh Financials" hook that runs on onAddLogs.
-    // simpler: If this is the FIRST log ever for this batch, i=0 gets welfare.
-    // If there were already logs, the EXISTING first log should have the welfare.
-    // We just need to make sure the roll amount increases.
-    
     const updatedFirstLog = { ...selectedGroup.logs[0], staffWelfare: welfare, rollAmount: roll };
-    // Zero out financials for all other existing logs to avoid duplication if DB has legacy data
-    const cleanedOtherExistingLogs = selectedGroup.logs.slice(1).map(l => ({ ...l, staffWelfare: 0, rollAmount: 0 }));
+    const cleanedOtherExistingLogs = selectedGroup.logs.slice(1).map((l: any) => ({ ...l, staffWelfare: 0, rollAmount: 0 }));
     
     if (selectedGroup.logs.length === 0) {
       newLogs[0].staffWelfare = welfare;
@@ -1079,6 +1262,9 @@ const CoalTransport: React.FC<CoalTransportProps> = ({
                   <input type="date" className="bg-transparent text-[9px] font-black border-none outline-none focus:ring-0" value={endDate} onChange={e => { setEndDate(e.target.value); setVisibleGroupCount(30); }} />
                 </div>
                 <div className="flex gap-1">
+                   {/* Settings Button */}
+                   <button onClick={() => setShowReportSettings(true)} className="bg-slate-100 hover:bg-slate-200 text-slate-600 px-3 py-2 rounded-lg text-[12px] transition-colors" title="Report Settings">⚙️</button>
+                   
                    <button onClick={handleExportPDF} title="PDF" className="bg-slate-900 text-white px-3 py-2 rounded-lg text-[9px] font-black uppercase">PDF</button>
                    <button onClick={handleExportExcel} title="Excel" className="bg-emerald-600 text-white px-3 py-2 rounded-lg text-[9px] font-black uppercase">XL</button>
                    <button onClick={() => setShowReportCenter(false)} className="bg-slate-100 hover:bg-slate-200 p-2 rounded-lg transition-colors text-[8px]">✕</button>
@@ -1113,7 +1299,7 @@ const CoalTransport: React.FC<CoalTransportProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
-              {aggregatedData.slice(0, visibleGroupCount).map((group, idx) => {
+              {aggregatedData.slice(0, visibleGroupCount).map((group: any, idx: number) => {
                 const efficiencyTrips = Math.max(0.1, group.entries + group.tripAdjustment);
                 const netEfficiencyDiesel = group.diesel + group.advanceFromYesterday - group.dieselAdjustment - group.airAdjustment;
                 return (
@@ -1553,6 +1739,51 @@ const CoalTransport: React.FC<CoalTransportProps> = ({
           </div>
         </div>
       )}
+      {showReportSettings && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[300] flex items-center justify-center p-4">
+           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden animate-scaleIn">
+              <div className="bg-slate-900 p-6 flex justify-between items-center">
+                 <h3 className="text-white font-black text-lg tracking-tight">Report Settings</h3>
+                 <button onClick={() => setShowReportSettings(false)} className="text-slate-400 hover:text-white text-2xl">&times;</button>
+              </div>
+              
+              <div className="p-6 space-y-6 max-h-[70vh] overflow-y-auto">
+                 {/* Section 1: Report Sections */}
+                 <div>
+                    <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-3">Include Sections</h4>
+                    <div className="grid grid-cols-2 gap-3">
+                       {Object.entries(reportOptions).map(([key, value]) => (
+                          <label key={key} className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl cursor-pointer hover:bg-slate-100 border border-slate-100">
+                             <input type="checkbox" checked={value} onChange={() => setReportOptions(prev => ({...prev, [key]: !prev[key as keyof typeof reportOptions]}))} className="w-4 h-4 rounded text-amber-500 focus:ring-amber-500" />
+                             <span className="text-xs font-bold text-slate-700 capitalize">{key.replace(/([A-Z])/g, ' $1').trim()}</span>
+                          </label>
+                       ))}
+                    </div>
+                 </div>
+
+                 {/* Section 2: Trip Detail Columns */}
+                 {reportOptions.tripDetails && (
+                    <div>
+                       <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-3">Trip Details Columns</h4>
+                       <div className="grid grid-cols-3 gap-2">
+                          {Object.entries(columnOptions).map(([key, value]) => (
+                             <label key={key} className="flex items-center gap-2 p-2 bg-slate-50 rounded-lg cursor-pointer hover:bg-slate-100">
+                                <input type="checkbox" checked={value} onChange={() => setColumnOptions(prev => ({...prev, [key]: !prev[key as keyof typeof columnOptions]}))} className="w-3 h-3 rounded text-amber-500 focus:ring-amber-500" />
+                                <span className="text-[10px] font-bold text-slate-600 capitalize">{key.replace(/([A-Z])/g, ' $1').trim()}</span>
+                             </label>
+                          ))}
+                       </div>
+                    </div>
+                 )}
+              </div>
+
+              <div className="p-6 bg-slate-50 border-t flex justify-end">
+                 <button onClick={() => setShowReportSettings(false)} className="bg-slate-900 text-white px-6 py-3 rounded-xl font-black text-xs uppercase tracking-widest shadow-lg active:scale-95">Save & Close</button>
+              </div>
+           </div>
+        </div>
+      )}
+      
       <div className="mt-8 pt-8 border-t border-slate-100 flex justify-center no-print">
          <p className="text-[10px] font-black text-slate-300 uppercase tracking-[0.3em]">Sapna Transport Logistics • Operation Monitor v3.0</p>
       </div>
