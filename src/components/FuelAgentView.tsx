@@ -34,6 +34,8 @@ const FuelAgentView: React.FC<AgentProps> = ({
   const [selectedDriverId, setSelectedDriverId] = useState('');
   const [driverSearch, setDriverSearch] = useState('');
   const [showDriverDropdown, setShowDriverDropdown] = useState(false);
+  const [truckHighlightIndex, setTruckHighlightIndex] = useState(-1);
+  const [driverHighlightIndex, setDriverHighlightIndex] = useState(-1);
   const [selectedStationId, setSelectedStationId] = useState('');
   const [odometer, setOdometer] = useState('');
   const [fuelLiters, setFuelLiters] = useState('');
@@ -43,6 +45,7 @@ const FuelAgentView: React.FC<AgentProps> = ({
   const [uploadingPhotos, setUploadingPhotos] = useState(false);
   const [photosUploaded, setPhotosUploaded] = useState(false);
   const [uploadedUrls, setUploadedUrls] = useState<(string | null)[]>([null, null, null, null]);
+  const [showProofSection, setShowProofSection] = useState(false);
   
   // Computed Attribution Date
   const attributionDate = useMemo(() => {
@@ -81,6 +84,23 @@ const FuelAgentView: React.FC<AgentProps> = ({
       .filter(d => d.status === 'ON Duty') // Fixed: Driver status is 'ON Duty', not 'ACTIVE'
       .filter(d => d.name.toLowerCase().includes(driverSearch.toLowerCase()));
   }, [drivers, driverSearch]);
+
+  // Handle outside clicks to close dropdowns
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (truckDropdownRef.current && !truckDropdownRef.current.contains(event.target as Node)) {
+        setShowTruckDropdown(false);
+      }
+      if (driverDropdownRef.current && !driverDropdownRef.current.contains(event.target as Node)) {
+        setShowDriverDropdown(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
   
   const [adminAgentFilter, setAdminAgentFilter] = useState('ALL');
 
@@ -194,6 +214,9 @@ const FuelAgentView: React.FC<AgentProps> = ({
     setPhotos([null, null, null, null]);
     setUploadedUrls([null, null, null, null]);
     setPhotosUploaded(false);
+    setShowProofSection(false);
+    setTruckHighlightIndex(-1);
+    setDriverHighlightIndex(-1);
   };
 
   const handleEdit = (log: FuelLog) => {
@@ -227,15 +250,71 @@ const FuelAgentView: React.FC<AgentProps> = ({
       log.verificationPhotos?.pumpEnd || null
     ]);
     setPhotosUploaded(true); // Treat existing photos as "uploaded"
+    
+    // Automatically open proof section if there are photos
+    if (log.verificationPhotos?.plate || log.verificationPhotos?.odo || log.verificationPhotos?.pumpStart || log.verificationPhotos?.pumpEnd) {
+      setShowProofSection(true);
+    } else {
+      setShowProofSection(false);
+    }
+    
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const validateOdometer = (val: string) => {
     const currentOdo = parseInt(val);
-    if (!isNaN(currentOdo) && currentOdo < previousOdometer) {
+    if (currentOdo && currentOdo < previousOdometer) {
       return false;
     }
     return true;
+  };
+
+  const handleTruckKeyDown = (e: React.KeyboardEvent) => {
+    if (!showTruckDropdown) return;
+    
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setTruckHighlightIndex(prev => (prev < filteredTrucks.length - 1 ? prev + 1 : prev));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setTruckHighlightIndex(prev => (prev > 0 ? prev - 1 : prev));
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (truckHighlightIndex >= 0 && truckHighlightIndex < filteredTrucks.length) {
+        const t = filteredTrucks[truckHighlightIndex];
+        setSelectedTruckId(t.id);
+        setTruckSearch(t.plateNumber);
+        setShowTruckDropdown(false);
+        setTruckHighlightIndex(-1);
+      }
+    } else if (e.key === 'Escape') {
+      setShowTruckDropdown(false);
+      setTruckHighlightIndex(-1);
+    }
+  };
+
+  const handleDriverKeyDown = (e: React.KeyboardEvent) => {
+    if (!showDriverDropdown) return;
+    
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setDriverHighlightIndex(prev => (prev < filteredDrivers.length - 1 ? prev + 1 : prev));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setDriverHighlightIndex(prev => (prev > 0 ? prev - 1 : prev));
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (driverHighlightIndex >= 0 && driverHighlightIndex < filteredDrivers.length) {
+        const d = filteredDrivers[driverHighlightIndex];
+        setSelectedDriverId(d.id);
+        setDriverSearch(d.name);
+        setShowDriverDropdown(false);
+        setDriverHighlightIndex(-1);
+      }
+    } else if (e.key === 'Escape') {
+      setShowDriverDropdown(false);
+      setDriverHighlightIndex(-1);
+    }
   };
 
   const handleUploadPhotos = async () => {
@@ -551,15 +630,30 @@ _via SapnaCarting Portal_`;
                
                <div className="space-y-1 relative" ref={truckDropdownRef}>
                   <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Vehicle Plate</label>
-                  <input type="text" placeholder="Search Plate..." className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-amber-500 font-black font-mono text-xl sm:text-2xl transition-all" value={truckSearch} onFocus={() => setShowTruckDropdown(true)} onChange={e => { setTruckSearch(e.target.value); setShowTruckDropdown(true); }} />
+                  <input 
+                    type="text"
+                    required 
+                    placeholder="Search Plate..." 
+                    className="w-full p-3 sm:p-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-amber-500 font-black font-mono text-base sm:text-2xl transition-all" 
+                    value={truckSearch} 
+                    onKeyDown={handleTruckKeyDown}
+                    onFocus={() => { setShowTruckDropdown(true); setTruckHighlightIndex(-1); }} 
+                    onChange={e => { setTruckSearch(e.target.value); setShowTruckDropdown(true); setTruckHighlightIndex(-1); }} 
+                  />
                    {showTruckDropdown && (
                     <div className="absolute z-[100] top-full left-0 right-0 mt-2 bg-white border border-slate-200 rounded-2xl shadow-2xl max-h-60 overflow-y-auto scrollbar-hide">
-                      {filteredTrucks.map(t => (
-                        <button key={t.id} type="button" className="w-full px-6 py-4 text-left hover:bg-slate-50 border-b border-slate-50 last:border-0 transition-colors" onClick={() => { setSelectedTruckId(t.id); setTruckSearch(t.plateNumber); setShowTruckDropdown(false); }}>
+                      {filteredTrucks.map((t, index) => (
+                        <button 
+                          key={t.id} 
+                          type="button" 
+                          ref={(el) => { if (index === truckHighlightIndex && el) el.scrollIntoView({ block: 'nearest' }); }}
+                          className={`w-full px-4 sm:px-6 py-3 sm:py-4 text-left border-b border-slate-50 last:border-0 transition-colors ${index === truckHighlightIndex ? 'bg-slate-300 rounded-xl' : 'hover:bg-slate-50'}`} 
+                          onClick={() => { setSelectedTruckId(t.id); setTruckSearch(t.plateNumber); setShowTruckDropdown(false); setTruckHighlightIndex(-1); }}
+                        >
                           <div className="flex justify-between items-center">
-                            <span className="font-black font-mono text-lg">{t.plateNumber}</span>
+                            <span className="font-black font-mono text-base sm:text-lg">{t.plateNumber}</span>
                             <div className="text-right">
-                              <span className="text-[9px] font-black text-slate-400 uppercase bg-slate-100 px-2 py-1 rounded-md mr-2">{t.fleetType}</span>
+                              <span className="text-[9px] font-black text-slate-400 uppercase bg-slate-100 px-2 py-1 rounded-md mr-1 sm:mr-2">{t.fleetType}</span>
                               <span className="text-[9px] font-black text-amber-600 uppercase bg-amber-50 px-2 py-1 rounded-md">{t.wheelConfig} WHEEL</span>
                             </div>
                           </div>
@@ -572,13 +666,28 @@ _via SapnaCarting Portal_`;
                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="space-y-1 relative" ref={driverDropdownRef}>
                       <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Operator</label>
-                      <input type="text" placeholder="Search Operator..." className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-amber-500 font-bold text-lg transition-all" value={driverSearch} onFocus={() => setShowDriverDropdown(true)} onChange={e => { setDriverSearch(e.target.value); setShowDriverDropdown(true); }} />
+                      <input 
+                        type="text" 
+                        required 
+                        placeholder="Search Operator..." 
+                        className="w-full p-3 sm:p-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-amber-500 font-bold text-sm sm:text-lg transition-all" 
+                        value={driverSearch} 
+                        onKeyDown={handleDriverKeyDown}
+                        onFocus={() => { setShowDriverDropdown(true); setDriverHighlightIndex(-1); }} 
+                        onChange={e => { setDriverSearch(e.target.value); setShowDriverDropdown(true); setDriverHighlightIndex(-1); }} 
+                      />
                       {showDriverDropdown && (
                         <div className="absolute z-[100] top-full left-0 right-0 mt-2 bg-white border border-slate-200 rounded-2xl shadow-2xl max-h-60 overflow-y-auto scrollbar-hide">
-                          {filteredDrivers.map(d => (
-                            <button key={d.id} type="button" className="w-full px-6 py-4 text-left hover:bg-slate-50 border-b border-slate-50 last:border-0 transition-colors" onClick={() => { setSelectedDriverId(d.id); setDriverSearch(d.name); setShowDriverDropdown(false); }}>
+                          {filteredDrivers.map((d, index) => (
+                            <button 
+                              key={d.id} 
+                              type="button" 
+                              ref={(el) => { if (index === driverHighlightIndex && el) el.scrollIntoView({ block: 'nearest' }); }}
+                              className={`w-full px-4 sm:px-6 py-3 sm:py-4 text-left border-b border-slate-50 last:border-0 transition-colors ${index === driverHighlightIndex ? 'bg-slate-300 rounded-xl' : 'hover:bg-slate-50'}`} 
+                              onClick={() => { setSelectedDriverId(d.id); setDriverSearch(d.name); setShowDriverDropdown(false); setDriverHighlightIndex(-1); }}
+                            >
                               <div className="flex justify-between items-center">
-                                <span className="font-bold text-slate-800">{d.name}</span>
+                                <span className="font-bold text-sm sm:text-base text-slate-800">{d.name}</span>
                                 <span className="text-[9px] font-black text-slate-400 uppercase bg-slate-100 px-2 py-1 rounded-md">{d.type}</span>
                               </div>
                             </button>
@@ -588,7 +697,7 @@ _via SapnaCarting Portal_`;
                   </div>
                   <div className="space-y-1">
                       <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Fueling Station</label>
-                      <select required className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold outline-none focus:ring-2 focus:ring-amber-500 text-lg transition-all h-[66px]" value={selectedStationId} onChange={e => setSelectedStationId(e.target.value)}>
+                      <select required className="w-full p-3 sm:p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold outline-none focus:ring-2 focus:ring-amber-500 text-sm sm:text-lg transition-all h-[52px] sm:h-[66px]" value={selectedStationId} onChange={e => setSelectedStationId(e.target.value)}>
                         <option value="">Choose Station...</option>
                         {masterData.fuelStations.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                       </select>
@@ -598,11 +707,11 @@ _via SapnaCarting Portal_`;
                <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1">
                     <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Liters</label>
-                    <input type="number" step="0.01" required placeholder="0.00" className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-black text-xl sm:text-2xl text-emerald-600 outline-none transition-all" value={fuelLiters} onChange={e => setFuelLiters(e.target.value)} />
+                    <input type="number" step="0.01" required placeholder="0.00" className="w-full p-3 sm:p-4 bg-slate-50 border border-slate-200 rounded-2xl font-black text-lg sm:text-2xl text-emerald-600 outline-none transition-all" value={fuelLiters} onChange={e => setFuelLiters(e.target.value)} />
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Rate (₹)</label>
-                    <input type="number" step="0.01" required placeholder="₹" className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-black text-xl sm:text-2xl outline-none transition-all" value={dieselPrice} onChange={e => setDieselPrice(e.target.value)} />
+                    <input type="number" step="0.01" required placeholder="₹" className="w-full p-3 sm:p-4 bg-slate-50 border border-slate-200 rounded-2xl font-black text-lg sm:text-2xl outline-none transition-all" value={dieselPrice} onChange={e => setDieselPrice(e.target.value)} />
                   </div>
                </div>
             </div>
@@ -611,7 +720,7 @@ _via SapnaCarting Portal_`;
                 <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100 pb-2 flex items-center gap-2"><span>📏</span> Production & ODO</h3>
                 <div className="relative">
                   <label className="text-[10px] font-black text-slate-400 uppercase ml-1 block mb-1">Production Date</label>
-                  <input type="date" className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold outline-none text-lg transition-all" value={fuelingDate} onChange={e => setFuelingDate(e.target.value)} />
+                  <input type="date" className="w-full p-3 sm:p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold outline-none text-sm sm:text-lg transition-all" value={fuelingDate} onChange={e => setFuelingDate(e.target.value)} />
                 </div>
               
               <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4">
@@ -621,7 +730,7 @@ _via SapnaCarting Portal_`;
                       type="number" 
                       required 
                       placeholder="Reading" 
-                      className={`w-full p-4 bg-slate-50 border rounded-2xl font-mono font-black text-2xl outline-none transition-all ${
+                      className={`w-full p-3 sm:p-4 bg-slate-50 border rounded-2xl font-mono font-black text-xl sm:text-2xl outline-none transition-all ${
                         odometer && !validateOdometer(odometer) ? 'border-rose-500 ring-2 ring-rose-200' : 'border-slate-200 focus:ring-2 focus:ring-amber-500'
                       }`} 
                       value={odometer} 
@@ -650,8 +759,17 @@ _via SapnaCarting Portal_`;
 
           <div className="space-y-4 pt-4">
              <div className="flex justify-between items-center px-1">
-                <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2"><span>📸</span> Proof Verification</h3>
-                {photos.some(p => p && p.startsWith('data:')) && !photosUploaded && (
+                <div className="flex items-center gap-3">
+                  <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2"><span>📸</span> Proof Verification</h3>
+                  <button 
+                    type="button" 
+                    onClick={() => setShowProofSection(!showProofSection)}
+                    className={`px-3 py-1.5 rounded-full text-[9px] font-black uppercase transition-all ${showProofSection ? 'bg-slate-100 text-slate-500' : 'bg-amber-100 text-amber-700 hover:bg-amber-200'}`}
+                  >
+                    {showProofSection ? 'Hide Photos' : '+ Add Photos (Optional)'}
+                  </button>
+                </div>
+                {showProofSection && photos.some(p => p && p.startsWith('data:')) && !photosUploaded && (
                   <button 
                     type="button"
                     disabled={uploadingPhotos}
@@ -664,55 +782,72 @@ _via SapnaCarting Portal_`;
                         Uploading...
                       </>
                     ) : (
-                      <><span>☁️</span> Upload Proofs Now</>
+                      <><span>☁️</span> Upload Proofs</>
                     )}
                   </button>
                 )}
-                {photosUploaded && (
+                {showProofSection && photosUploaded && (
                   <span className="text-[9px] font-black text-emerald-600 uppercase bg-emerald-50 px-3 py-1.5 rounded-full flex items-center gap-1">
-                    <span>✓</span> Proofs Confirmed
+                    <span>✓</span> Confirmed
                   </span>
                 )}
              </div>
-             <p className="text-[8px] font-bold text-slate-400 uppercase ml-1">Optional: Take 1-4 verification photos at once</p>
-             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
-                {[0, 1, 2, 3].map(index => (
-                  <div key={index} className={`relative aspect-square border-2 border-dashed rounded-[1.5rem] sm:rounded-3xl bg-slate-50 flex flex-col items-center justify-center cursor-pointer overflow-hidden group transition-all shadow-sm ${
-                    photos[index] ? 'border-emerald-200 bg-emerald-50/10' : 'border-slate-200 hover:border-amber-400'
-                  }`}>
-                    {photos[index] ? (
-                      <div className="absolute inset-0">
-                        <img src={photos[index]!} className="w-full h-full object-cover" alt={`Proof ${index + 1}`} />
-                        <div className="absolute inset-0 bg-black/40 flex items-center justify-center gap-2 opacity-100 sm:opacity-0 group-hover:opacity-100 transition-opacity">
-                           <button 
-                             type="button" 
-                             onClick={(e) => { e.stopPropagation(); handleDiscardPhoto(index); }}
-                             className="text-[8px] font-black text-white uppercase bg-rose-600 px-3 py-1.5 rounded-full hover:bg-rose-700"
-                           >
-                             Discard
-                           </button>
-                           <span className="text-[8px] font-black text-white uppercase bg-slate-900/60 px-3 py-1.5 rounded-full">Retake</span>
-                        </div>
+             
+             {showProofSection && (
+               <div className="animate-fadeIn">
+                 <p className="text-[8px] font-bold text-slate-400 uppercase ml-1 mb-3">Take 1-4 verification photos at once</p>
+                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+                    {[0, 1, 2, 3].map(index => (
+                      <div key={index} className={`relative aspect-[4/3] sm:aspect-square border-2 border-dashed rounded-[1.25rem] sm:rounded-[1.5rem] bg-slate-50 flex flex-col items-center justify-center overflow-hidden group transition-all shadow-sm ${
+                        photos[index] ? 'border-emerald-200 bg-emerald-50/10' : 'border-slate-200 hover:border-amber-400'
+                      }`}>
+                        {photos[index] ? (
+                          <div className="absolute inset-0">
+                            <img src={photos[index]!} className="w-full h-full object-cover" alt={`Proof ${index + 1}`} />
+                            <div className="absolute inset-0 bg-black/60 flex items-center justify-center gap-3 opacity-100 sm:opacity-0 group-hover:opacity-100 transition-opacity">
+                               <button 
+                                 type="button" 
+                                 onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleDiscardPhoto(index); }}
+                                 className="relative z-10 text-[9px] sm:text-[10px] font-black text-white uppercase bg-rose-600 px-4 py-2 rounded-full hover:bg-rose-700 shadow-lg active:scale-95 transition-transform"
+                               >
+                                 Discard
+                               </button>
+                               <label className="relative z-10 text-[9px] sm:text-[10px] font-black text-white uppercase bg-slate-700 px-4 py-2 rounded-full hover:bg-slate-600 shadow-lg cursor-pointer active:scale-95 transition-transform">
+                                 Retake
+                                 <input 
+                                   type="file" 
+                                   className="hidden" 
+                                   accept="image/*" 
+                                   capture="environment" 
+                                   onChange={e => {
+                                     handlePhotoUpload(index, e);
+                                     setPhotosUploaded(false); 
+                                   }} 
+                                 />
+                               </label>
+                            </div>
+                          </div>
+                        ) : (
+                          <label className="absolute inset-0 flex flex-col items-center justify-center cursor-pointer w-full h-full">
+                            <span className="text-2xl sm:text-3xl mb-1 opacity-40">📷</span>
+                            <span className="text-[9px] font-black text-slate-400 uppercase px-2 text-center">Slot {index + 1}</span>
+                            <input 
+                              type="file" 
+                              className="hidden" 
+                              accept="image/*" 
+                              capture="environment" 
+                              onChange={e => {
+                                handlePhotoUpload(index, e);
+                                setPhotosUploaded(false); 
+                              }} 
+                            />
+                          </label>
+                        )}
                       </div>
-                    ) : (
-                      <>
-                        <span className="text-2xl sm:text-3xl mb-1 opacity-40">📷</span>
-                        <span className="text-[9px] font-black text-slate-400 uppercase px-2 text-center">Slot {index + 1}</span>
-                      </>
-                    )}
-                    <input 
-                      type="file" 
-                      className="absolute inset-0 opacity-0 cursor-pointer" 
-                      accept="image/*" 
-                      capture="environment" 
-                      onChange={e => {
-                        handlePhotoUpload(index, e);
-                        setPhotosUploaded(false); // Reset upload status if photo changed
-                      }} 
-                    />
-                  </div>
-                ))}
-             </div>
+                    ))}
+                 </div>
+               </div>
+             )}
           </div>
 
           <button 

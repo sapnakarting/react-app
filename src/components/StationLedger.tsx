@@ -243,9 +243,9 @@ const StationLedger: React.FC<Props> = ({
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-           <button onClick={onBack} className="text-slate-400 hover:text-slate-900 font-black text-xs uppercase tracking-widest mb-2 flex items-center gap-2">
+           {/* <button onClick={onBack} className="text-slate-400 hover:text-slate-900 font-black text-xs uppercase tracking-widest mb-2 flex items-center gap-2">
              <span>←</span> BACK TO FUELING HISTORY
-           </button>
+           </button> */}  
            <h1 className="text-2xl sm:text-4xl font-black text-slate-900 uppercase tracking-tight flex items-center gap-3">
              <span className="text-3xl sm:text-4xl">🏛️</span> {station.name} <span className="text-slate-300">LEDGER</span>
            </h1>

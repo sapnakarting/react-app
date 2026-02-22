@@ -217,6 +217,79 @@ const TruckRegistry: React.FC<RegistryProps> = ({ trucks, spareTires, onReplaceT
     URL.revokeObjectURL(url);
   };
 
+  const exportStatusReport = () => {
+    // Format date as dd/mm/yyyy for display and dd_mm_yyyy for filename
+    const now = new Date();
+    const dd = String(now.getDate()).padStart(2, '0');
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const yyyy = now.getFullYear();
+    const displayDate = `${dd}/${mm}/${yyyy}`;
+    const fileDate = `${dd}_${mm}_${yyyy}`;
+
+    let fleetLabel = 'FLEET';
+    if (repFleetFilter === 'COAL') fleetLabel = 'VALIA LIGHNITE';
+    if (repFleetFilter === 'MINING') fleetLabel = 'LOCAL';
+
+    let tableHtml = `
+      <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+      <head><!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet><x:Name>Status Report</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions></x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]--></head>
+      <body>
+      <table border="1">
+        <thead>
+          <tr>
+            <th colspan="5" style="font-weight: bold; text-align: center;">S A LOGISTICS VEHICLE STATUS: ${fleetLabel}</th>
+          </tr>
+          <tr>
+            <th colspan="5" style="font-weight: bold; text-align: center;">DATE : ${displayDate}</th>
+          </tr>
+          <tr style="font-weight: bold;">
+            <th>SR NO</th>
+            <th>VEHICLE ID</th>
+            <th>NO. OF WHEELS</th>
+            <th>STATUS</th>
+            <th>REASON/REMARKS</th>
+          </tr>
+        </thead>
+        <tbody>
+    `;
+
+    reportingList.forEach((t, idx) => {
+      const isBreakdownOrMaintenance = t.status === 'BREAKDOWN' || t.status === 'MAINTENANCE';
+      let reason = '';
+      
+      if (isBreakdownOrMaintenance) {
+        // Find the latest remark from history or use the current truck's remark
+        const latestRemarkObj = t.statusHistory?.find(h => h.remarks && (h.status === 'BREAKDOWN' || h.status === 'MAINTENANCE'));
+        reason = latestRemarkObj?.remarks || t.remarks || '';
+      }
+
+      const style = isBreakdownOrMaintenance ? 'color: #ef4444; font-weight: bold;' : '';
+      // wheelConfig is already formatted like '10 WHEEL', if it's just a number or undefined we append WHEEL
+      const wheelConfigStr = t.wheelConfig ? (t.wheelConfig.includes('WHEEL') ? t.wheelConfig : `${t.wheelConfig} WHEEL`) : '10 WHEEL';
+      
+      tableHtml += `
+        <tr>
+          <td>${idx + 1}</td>
+          <td>${t.plateNumber}</td>
+          <td>${wheelConfigStr}</td>
+          <td style="${style}">${t.status}</td>
+          <td style="${style}">${isBreakdownOrMaintenance ? reason : ''}</td>
+        </tr>
+      `;
+    });
+
+    tableHtml += `</tbody></table></body></html>`;
+
+    const blob = new Blob([tableHtml], { type: 'application/vnd.ms-excel' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    
+    link.download = `Fleet_Status_Report_${fileDate}.xls`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
   const handleAddSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTruck.plateNumber) return;
@@ -571,8 +644,11 @@ const TruckRegistry: React.FC<RegistryProps> = ({ trucks, spareTires, onReplaceT
                 <p className="hidden sm:block text-sm text-slate-400 font-bold uppercase tracking-widest mt-1 italic">Audit Registry & Document Status Dashboard</p>
               </div>
               <div className="flex gap-2 sm:gap-4">
-                <button onClick={exportFleetExcel} className="bg-emerald-600 text-white px-4 sm:px-8 py-2 sm:py-3 rounded-2xl font-black text-[10px] sm:text-xs uppercase tracking-widest shadow-xl hover:bg-emerald-700 transition-all flex items-center gap-2">
-                  <span>📗</span> <span className="hidden sm:inline">EXCEL</span>
+                <button onClick={exportStatusReport} className="bg-transparent border border-rose-500 text-rose-500 px-4 sm:px-6 py-2 sm:py-3 rounded-2xl font-black text-[10px] sm:text-xs uppercase tracking-widest hover:bg-rose-500 hover:text-white transition-all flex items-center gap-2">
+                  <span>status report</span>
+                </button>
+                <button onClick={exportFleetExcel} className="bg-emerald-600 text-white px-4 sm:px-6 py-2 sm:py-3 rounded-2xl font-black text-[10px] sm:text-xs uppercase tracking-widest shadow-xl hover:bg-emerald-700 transition-all flex items-center gap-2">
+                  <span>Detail compilane report</span>
                 </button>
                 <button onClick={() => setIsReportModalOpen(false)} className="text-white text-3xl font-light hover:text-rose-500 transition-colors">&times;</button>
               </div>
