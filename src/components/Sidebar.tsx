@@ -23,6 +23,7 @@ const Sidebar: React.FC<SidebarProps> = ({ role, activeView, setActiveView, onLo
             links: [
               { id: 'dashboard', label: 'Dashboard', icon: '📊' },
               { id: 'fuel-analytics', label: 'Diesel Audit', icon: '⛽' },
+              { id: 'station-ledgers', label: 'Station Ledgers', icon: '🏛️' },
               { id: 'reports', label: 'Asset Reports', icon: '📋' },
             ]
           },

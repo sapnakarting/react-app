@@ -19,6 +19,7 @@ export interface FuelStation {
   id: string;
   name: string;
   location?: string;
+  isInternal?: boolean;
 }
 
 export interface StationPayment {
@@ -175,6 +176,21 @@ export interface FuelLog {
   performanceRemarks?: string; // New: Reason for worst performance
 }
 
+export interface MiscFuelEntry {
+  id: string;
+  stationId: string;       // From which station/pump was it bought
+  date: string;
+  vehicleDescription: string;
+  usageType: 'PERSONAL' | 'OFFICE' | 'BULK_TRANSFER' | 'OTHER';
+  fuelLiters: number;
+  dieselPrice: number;
+  amount: number;          // fuelLiters * dieselPrice
+  invoiceNo?: string;
+  receiverName?: string;
+  remarks?: string;
+  destinationStationId?: string; // For BULK_TRANSFER: Which internal tanker received it?
+}
+
 export interface TripLog {
   id: string;
   truckId: string;
@@ -220,6 +236,7 @@ export interface FleetState {
   drivers: Driver[];
   tireInventory: Tire[];
   fuelLogs: FuelLog[];
+  miscFuelEntries: MiscFuelEntry[];
   tripLogs: TripLog[];
   coalLogs: CoalLog[];
   miningLogs: MiningLog[];

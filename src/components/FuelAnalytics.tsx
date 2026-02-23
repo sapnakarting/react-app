@@ -123,18 +123,37 @@ const FuelAnalytics: React.FC<{
   // Station Liability Analytics
   const stationStats = useMemo(() => {
     const stats: Record<string, { liters: number, cost: number }> = {};
+    // 1. Fleet fuel logs
     filteredFuelLogs.forEach(log => {
       const sid = log.stationId || 'UNKNOWN';
       if (!stats[sid]) stats[sid] = { liters: 0, cost: 0 };
       stats[sid].liters += (log.fuelLiters || 0);
       stats[sid].cost += ((log.fuelLiters || 0) * (log.dieselPrice || 0));
     });
-    return Object.entries(stats).map(([id, data]) => ({
-      id,
-      name: state.masterData.fuelStations.find(s => s.id === id || s.name === id)?.name || 'Unknown/Self',
-      ...data
-    })).sort((a, b) => b.cost - a.cost);
-  }, [filteredFuelLogs, state.masterData.fuelStations]);
+    // 2. Misc fuel entries — these are also real debts owed to the external pump
+    state.miscFuelEntries.forEach(m => {
+      // Apply the same date-range filter as fuelLogs
+      const d = new Date(m.date);
+      const s = startDate ? new Date(startDate) : null;
+      const e = endDate ? new Date(endDate) : null;
+      if ((s && d < s) || (e && d > e)) return;
+      const sid = m.stationId;
+      if (!stats[sid]) stats[sid] = { liters: 0, cost: 0 };
+      stats[sid].liters += m.fuelLiters;
+      stats[sid].cost += m.amount;
+    });
+    return Object.entries(stats)
+      .filter(([id]) => {
+        // Exclude internal tankers — they are assets, not creditors
+        const station = state.masterData.fuelStations.find(s => s.id === id || s.name === id);
+        return !station?.isInternal;
+      })
+      .map(([id, data]) => ({
+        id,
+        name: state.masterData.fuelStations.find(s => s.id === id || s.name === id)?.name || 'Unknown/Self',
+        ...data
+      })).sort((a, b) => b.cost - a.cost);
+  }, [filteredFuelLogs, state.miscFuelEntries, state.masterData.fuelStations, startDate, endDate]);
 
   const { bestPerformers, worstPerformers } = useMemo(() => {
     const valid = truckStats.filter(t => t.totalLiters > 0);
@@ -167,7 +186,9 @@ const FuelAnalytics: React.FC<{
 
   const exportAnalytics = () => {
     const wb = XLSX.utils.book_new();
-    const data: any[][] = [
+
+    // ── Sheet 1: Fleet Fuel Logs ──
+    const fleetData: any[][] = [
        ["SAPNA CARTING - STRATEGIC DIESEL AUDIT"],
        [`Report Generated: ${new Date().toLocaleDateString()}`],
        [`Period: ${startDate || 'Start'} to ${endDate || 'End'}`],
@@ -180,8 +201,7 @@ const FuelAnalytics: React.FC<{
        const station = state.masterData.fuelStations.find(s => s.id === l.stationId || s.name === l.stationId);
        const distance = (l.odometer || 0) - (l.previousOdometer || 0);
        const efficiency = l.fuelLiters > 0 ? (distance / l.fuelLiters).toFixed(3) : "0.00";
-
-       data.push([
+       fleetData.push([
           l.date,
           truck?.plateNumber || "N/A",
           truck?.fleetType || "N/A",
@@ -194,15 +214,45 @@ const FuelAnalytics: React.FC<{
        ]);
     });
 
-    const ws = XLSX.utils.aoa_to_sheet(data);
-    ws['!cols'] = [{ wch: 12 }, { wch: 15 }, { wch: 10 }, { wch: 25 }, { wch: 10 }, { wch: 10 }, { wch: 12 }, { wch: 10 }, { wch: 12 }];
+    const fleetTotalLiters = filteredFuelLogs.reduce((acc, l) => acc + l.fuelLiters, 0);
+    const fleetTotalAmount = filteredFuelLogs.reduce((acc, l) => acc + (l.fuelLiters * (l.dieselPrice || 0)), 0);
+    fleetData.push([]);
+    fleetData.push(["FLEET TOTALS", "", "", "", fleetTotalLiters, "", fleetTotalAmount.toFixed(3)]);
 
-    // Totals
-    const totalLiters = filteredFuelLogs.reduce((acc, l) => acc + l.fuelLiters, 0);
-    const totalAmount = filteredFuelLogs.reduce((acc, l) => acc + (l.fuelLiters * (l.dieselPrice || 0)), 0);
-    const lastRow = XLSX.utils.decode_range(ws['!ref'] || 'A1').e.r + 2;
-    XLSX.utils.sheet_add_aoa(ws, [["TOTALS", "", "", "", totalLiters, "", totalAmount.toFixed(3)]], { origin: `A${lastRow}` });
+    // ── Misc Entries section ──
+    const filteredMisc = state.miscFuelEntries.filter(m => {
+      const d = new Date(m.date);
+      const s = startDate ? new Date(startDate) : null;
+      const e = endDate ? new Date(endDate) : null;
+      return (!s || d >= s) && (!e || d <= e);
+    });
 
+    if (filteredMisc.length > 0) {
+      fleetData.push([]);
+      fleetData.push(["--- MISCELLANEOUS ENTRIES ---"]);
+      fleetData.push(["DATE", "DESCRIPTION", "TYPE", "STATION", "LITERS", "RATE (₹)", "AMOUNT (₹)"]);
+      filteredMisc.forEach(m => {
+        const srcStation = state.masterData.fuelStations.find(s => s.id === m.stationId);
+        fleetData.push([
+          m.date,
+          m.vehicleDescription,
+          m.usageType,
+          srcStation?.name || 'N/A',
+          m.fuelLiters,
+          m.dieselPrice,
+          m.amount.toFixed(2)
+        ]);
+      });
+      const miscTotalLiters = filteredMisc.reduce((acc, m) => acc + m.fuelLiters, 0);
+      const miscTotalAmount = filteredMisc.reduce((acc, m) => acc + m.amount, 0);
+      fleetData.push([]);
+      fleetData.push(["MISC TOTALS", "", "", "", miscTotalLiters, "", miscTotalAmount.toFixed(2)]);
+      fleetData.push([]);
+      fleetData.push(["GRAND TOTAL (Fleet + Misc)", "", "", "", fleetTotalLiters + miscTotalLiters, "", (fleetTotalAmount + miscTotalAmount).toFixed(2)]);
+    }
+
+    const ws = XLSX.utils.aoa_to_sheet(fleetData);
+    ws['!cols'] = [{ wch: 12 }, { wch: 25 }, { wch: 15 }, { wch: 25 }, { wch: 10 }, { wch: 10 }, { wch: 14 }, { wch: 10 }, { wch: 12 }];
     XLSX.utils.book_append_sheet(wb, ws, "Diesel Audit");
     XLSX.writeFile(wb, `Fleet_Diesel_Audit_${new Date().getTime()}.xlsx`);
   };
@@ -211,10 +261,10 @@ const FuelAnalytics: React.FC<{
     const doc = new jsPDF();
     doc.setFontSize(22); doc.setTextColor(15, 23, 42); doc.setFont("helvetica", "bold");
     doc.text("SAPNA CARTING Audit", 14, 20);
-    
     doc.setFontSize(10); doc.setTextColor(100);
     doc.text(`Strategic Fuel Intelligence Report • ${new Date().toLocaleDateString()}`, 14, 26);
 
+    // ── Section 1: Fleet Fuel Logs ──
     const tableData = filteredFuelLogs.slice(0, 50).map(l => {
       const truck = state.trucks.find(t => t.id === l.truckId);
       return [
@@ -225,19 +275,59 @@ const FuelAnalytics: React.FC<{
         `INR ${(l.fuelLiters * (l.dieselPrice || 0)).toLocaleString()}`
       ];
     });
-
     const totalL = filteredFuelLogs.reduce((acc, l) => acc + l.fuelLiters, 0);
     const totalA = filteredFuelLogs.reduce((acc, l) => acc + (l.fuelLiters * (l.dieselPrice || 0)), 0);
 
     autoTable(doc, {
-      startY: 40,
-      head: [['Date', 'Vehicle', 'Station', 'Liters', 'Liability']],
+      startY: 36,
+      head: [['Date', 'Vehicle', 'Station', 'Liters', 'Amount (₹)']],
       body: tableData,
       theme: 'grid',
-      headStyles: { fillColor: [15, 23, 42] },
-      foot: [['TOTALS', '', '', `${totalL.toFixed(3)} L`, `INR ${totalA.toLocaleString()}`]],
-      footStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: 'bold' }
+      headStyles: { fillColor: [15, 23, 42], fontSize: 8 },
+      bodyStyles: { fontSize: 8 },
+      foot: [['FLEET TOTALS', '', '', `${totalL.toFixed(3)} L`, `INR ${totalA.toLocaleString()}`]],
+      footStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: 'bold', fontSize: 8 }
     });
+
+    // ── Section 2: Miscellaneous Entries ──
+    const filteredMisc = state.miscFuelEntries.filter(m => {
+      const d = new Date(m.date);
+      const s = startDate ? new Date(startDate) : null;
+      const e = endDate ? new Date(endDate) : null;
+      return (!s || d >= s) && (!e || d <= e);
+    });
+
+    if (filteredMisc.length > 0) {
+      const miscY = (doc as any).lastAutoTable.finalY + 10;
+      doc.setFontSize(11); doc.setTextColor(15, 23, 42); doc.setFont('helvetica', 'bold');
+      doc.text('Miscellaneous Fuel Entries', 14, miscY);
+
+      const miscData = filteredMisc.map(m => {
+        const srcStation = state.masterData.fuelStations.find(s => s.id === m.stationId);
+        return [
+          m.date,
+          m.vehicleDescription,
+          m.usageType,
+          srcStation?.name || 'N/A',
+          `${m.fuelLiters.toFixed(3)} L`,
+          `INR ${m.amount.toLocaleString()}`
+        ];
+      });
+      const miscTotalL = filteredMisc.reduce((acc, m) => acc + m.fuelLiters, 0);
+      const miscTotalA = filteredMisc.reduce((acc, m) => acc + m.amount, 0);
+
+      autoTable(doc, {
+        startY: miscY + 5,
+        head: [['Date', 'Description', 'Type', 'Station', 'Liters', 'Amount (₹)']],
+        body: miscData,
+        theme: 'grid',
+        headStyles: { fillColor: [5, 150, 105], fontSize: 8 },
+        bodyStyles: { fontSize: 8 },
+        foot: [['MISC TOTALS', '', '', '', `${miscTotalL.toFixed(3)} L`, `INR ${miscTotalA.toLocaleString()}`],
+               ['GRAND TOTAL', '', '', '', `${(totalL + miscTotalL).toFixed(3)} L`, `INR ${(totalA + miscTotalA).toLocaleString()}`]],
+        footStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: 'bold', fontSize: 8 }
+      });
+    }
 
     doc.save(`Diesel_Audit_Express_${new Date().getTime()}.pdf`);
   };
@@ -495,7 +585,7 @@ const FuelAnalytics: React.FC<{
                  >
                     <option value="ALL">ALL STATIONS</option>
                     {state.masterData.fuelStations.map(s => (
-                       <option key={s.id} value={s.id}>{s.name.toUpperCase()}</option>
+                       <option key={s.id} value={s.id}>{s.name.toUpperCase()}{s.isInternal ? ' (TANKER)' : ''}</option>
                     ))}
                  </select>
                  <div className="flex gap-2">

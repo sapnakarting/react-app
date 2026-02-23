@@ -13,6 +13,7 @@ const Settings: React.FC<SettingsProps> = ({ masterData, onUpdate }) => {
   const [activeTab, setActiveTab] = useState<keyof MasterData | 'benchmarks'>('benchmarks');
   const [newItem, setNewItem] = useState('');
   const [newLocation, setNewLocation] = useState('');
+  const [newIsInternal, setNewIsInternal] = useState(false);
   const [newSiteType, setNewSiteType] = useState<'LOADING' | 'UNLOADING'>('LOADING');
   const [success, setSuccess] = useState(false);
   const [benchmarkBuffer, setBenchmarkBuffer] = useState<FuelBenchmarks>(masterData.benchmarks || {
@@ -61,9 +62,10 @@ const Settings: React.FC<SettingsProps> = ({ masterData, onUpdate }) => {
         alert("Station already exists.");
         return;
       }
-      const newStation = { id: crypto.randomUUID(), name: newItem.trim(), location: newLocation.trim() || 'Main Site' };
+      const newStation = { id: crypto.randomUUID(), name: newItem.trim(), location: newLocation.trim() || 'Main Site', isInternal: newIsInternal };
       onUpdate('fuelStations', [...currentList, newStation]);
       setNewLocation('');
+      setNewIsInternal(false);
     } else {
       const currentList = (masterData[activeTab as keyof MasterData] as string[]) || [];
       if (currentList.includes(newItem.trim())) {
@@ -222,6 +224,18 @@ const Settings: React.FC<SettingsProps> = ({ masterData, onUpdate }) => {
                       onKeyDown={e => e.key === 'Enter' && handleAdd()} 
                     />
                   </div>
+                  <label className="flex items-center gap-3 p-4 bg-slate-50 border border-slate-200 rounded-2xl cursor-pointer hover:bg-slate-100 transition-colors">
+                    <input
+                      type="checkbox"
+                      className="w-5 h-5 accent-amber-500 rounded cursor-pointer"
+                      checked={newIsInternal}
+                      onChange={(e) => setNewIsInternal(e.target.checked)}
+                    />
+                    <div>
+                      <span className="block font-bold text-slate-700 text-sm">Internal Tanker / Stock Location</span>
+                      <span className="block text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">Check this if it is a company-owned fuel tanker acting as a pump</span>
+                    </div>
+                  </label>
                   <button onClick={handleAdd} className="bg-slate-900 text-white py-5 rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl">REGISTER NEW STATION</button>
                 </div>
 
@@ -229,7 +243,10 @@ const Settings: React.FC<SettingsProps> = ({ masterData, onUpdate }) => {
                   {(masterData.fuelStations || []).map(station => (
                     <div key={station.id} className="flex items-center justify-between p-4 bg-white border border-slate-100 rounded-2xl shadow-sm">
                       <div className="flex flex-col">
-                         <span className="font-bold text-slate-700 text-sm">{station.name}</span>
+                         <div className="flex items-center gap-2">
+                           <span className="font-bold text-slate-700 text-sm">{station.name}</span>
+                           {station.isInternal && <span className="bg-emerald-100 text-emerald-700 text-[8px] font-black tracking-widest uppercase px-2 py-0.5 rounded-full">INTERNAL TANKER</span>}
+                         </div>
                          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">{station.location || 'Generic Point'}</span>
                       </div>
                       <button onClick={(e) => handleRemove(e, station)} className="text-rose-400 hover:text-rose-600 font-black text-xl w-8 h-8 rounded-full hover:bg-rose-50 flex items-center justify-center transition-all">&times;</button>

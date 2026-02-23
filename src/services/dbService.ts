@@ -1,5 +1,5 @@
 
-import { FleetState, FuelLog, CoalLog, Truck, Driver, Tire, MiningLog, MasterData, User, FuelBenchmarks, DailyOdoEntry, CoalSite, FuelStation, StationPayment } from '../types';
+import { FleetState, FuelLog, CoalLog, Truck, Driver, Tire, MiningLog, MasterData, User, FuelBenchmarks, DailyOdoEntry, CoalSite, FuelStation, StationPayment, MiscFuelEntry } from '../types';
 import { supabase } from './supabaseClient';
 import { AUTH_CONFIG } from './authService';
 
@@ -43,6 +43,7 @@ export const dbService = {
         { data: mStationPayments },
         { data: mUsers },
         { data: mProfiles },
+        { data: mMiscFuelEntries },
         { data: mMaterials }, { data: mSites }, { data: mAgents }, { data: mLoaders }, { data: mCustomers }, { data: mSuppliers }, { data: mRoyalty }, { data: mTireSuppliers }, { data: mTireBrands }
       ] = await Promise.all([
         supabase.from('trucks').select('*'),
@@ -57,6 +58,7 @@ export const dbService = {
         supabase.from('fuel_station_payments').select('*'),
         supabase.from('app_users').select('id, username, role'),
         supabase.from('profiles').select('id, username, role'),
+        supabase.from('misc_fuel_entries').select('*').order('date', { ascending: false }).limit(500),
         supabase.from('material_types').select('name'),
         supabase.from('operational_sites').select('name'),
         supabase.from('carting_agents').select('name'),
@@ -89,7 +91,7 @@ export const dbService = {
         tireSuppliers: mTireSuppliers?.map(m => m.name) || [],
         tireBrands: mTireBrands?.map(m => m.name) || [],
         coalSites: (mCoalSites || []).map(s => ({ id: s.id, name: s.name, siteType: s.site_type })),
-        fuelStations: (mFuelStations || []).map(s => ({ id: s.id, name: s.name, location: s.location })),
+        fuelStations: (mFuelStations || []).map(s => ({ id: s.id, name: s.name, location: s.location, isInternal: s.is_internal })),
         benchmarks
       };
 
@@ -143,6 +145,20 @@ export const dbService = {
           photoProof: f.verification_photos?.odo || null,
           attributionDate: f.attribution_date || f.date,
           entryType: f.entry_type || 'FULL_TANK'
+        })),
+        miscFuelEntries: (mMiscFuelEntries || []).map(m => ({
+          id: m.id,
+          stationId: m.station_id,
+          date: m.date,
+          vehicleDescription: m.vehicle_description,
+          usageType: m.usage_type as any,
+          fuelLiters: m.fuel_liters,
+          dieselPrice: m.diesel_price,
+          amount: m.amount,
+          invoiceNo: m.invoice_no,
+          receiverName: m.receiver_name,
+          remarks: m.remarks,
+          destinationStationId: m.destination_station_id
         })),
         coalLogs: (coalLogs || []).map(c => ({
           ...c,
@@ -412,6 +428,46 @@ export const dbService = {
     if (error) throw error;
   },
 
+  async addMiscFuelEntry(entry: MiscFuelEntry): Promise<void> {
+    const { error } = await supabase.from('misc_fuel_entries').insert([{
+      id: entry.id,
+      station_id: entry.stationId,
+      date: entry.date,
+      vehicle_description: entry.vehicleDescription,
+      usage_type: entry.usageType,
+      fuel_liters: entry.fuelLiters,
+      diesel_price: entry.dieselPrice,
+      amount: entry.amount,
+      invoice_no: entry.invoiceNo,
+      receiver_name: entry.receiverName,
+      remarks: entry.remarks,
+      destination_station_id: entry.destinationStationId
+    }]);
+    if (error) throw error;
+  },
+
+  async updateMiscFuelEntry(entry: MiscFuelEntry): Promise<void> {
+    const { error } = await supabase.from('misc_fuel_entries').update({
+      station_id: entry.stationId,
+      date: entry.date,
+      vehicle_description: entry.vehicleDescription,
+      usage_type: entry.usageType,
+      fuel_liters: entry.fuelLiters,
+      diesel_price: entry.dieselPrice,
+      amount: entry.amount,
+      invoice_no: entry.invoiceNo,
+      receiver_name: entry.receiverName,
+      remarks: entry.remarks,
+      destination_station_id: entry.destinationStationId
+    }).eq('id', entry.id);
+    if (error) throw error;
+  },
+
+  async deleteMiscFuelEntry(id: string): Promise<void> {
+    const { error } = await supabase.from('misc_fuel_entries').delete().eq('id', id);
+    if (error) throw error;
+  },
+
   async addCoalLogs(logs: CoalLog[]): Promise<void> {
     const payload = logs.map(c => ({
       id: c.id || crypto.randomUUID(),
@@ -582,7 +638,7 @@ export const dbService = {
           const payload = list.map(s => ({ id: s.id, name: s.name, site_type: s.siteType }));
           await supabase.from('coal_sites').upsert(payload);
         } else {
-          const payload = list.map(s => ({ id: s.id, name: s.name, location: s.location }));
+          const payload = list.map(s => ({ id: s.id, name: s.name, location: s.location, is_internal: s.isInternal || false }));
           await supabase.from('fuel_stations').upsert(payload);
         }
       } else {

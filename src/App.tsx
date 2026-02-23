@@ -179,7 +179,7 @@ const App: React.FC = () => {
     const role = currentUser?.role;
     
     // Role-based view filtering (RBAC)
-    if (role === 'FUEL_AGENT' && !['fuel-agent', 'fuel-history', 'station-ledger'].includes(activeView)) {
+    if (role === 'FUEL_AGENT' && !['fuel-agent', 'fuel-history', 'station-ledger', 'station-ledgers'].includes(activeView)) {
       return (
         <FuelAgentView 
           currentUser={currentUser}
@@ -351,20 +351,77 @@ const App: React.FC = () => {
             }}
           />
         );
-      case 'station-ledger':
+      case 'station-ledgers': {
+        // Landing page — show all stations as clickable cards
+        return (
+          <div className="space-y-6">
+            <div>
+              <h2 className="text-2xl sm:text-3xl font-black text-slate-900 uppercase tracking-tight flex items-center gap-3">
+                <span className="text-3xl">🏛️</span> Station Ledgers
+              </h2>
+              <p className="text-slate-400 text-xs font-bold uppercase tracking-widest mt-1">Select a station to open its ledger</p>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {state.masterData.fuelStations.map(s => (
+                <button
+                  key={s.id}
+                  onClick={() => {
+                    setNavParams({ stationId: s.id });
+                    setActiveView('station-ledger');
+                  }}
+                  className="bg-white border border-slate-100 rounded-[2rem] p-6 text-left shadow-sm hover:shadow-xl hover:border-amber-200 active:scale-95 transition-all group"
+                >
+                  <div className="flex items-start justify-between mb-4">
+                    <span className="text-3xl">{s.isInternal ? '🛢️' : '⛽'}</span>
+                    <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-full ${
+                      s.isInternal
+                        ? 'bg-blue-50 text-blue-500 border border-blue-100'
+                        : 'bg-amber-50 text-amber-500 border border-amber-100'
+                    }`}>
+                      {s.isInternal ? 'Internal Tanker' : 'External Pump'}
+                    </span>
+                  </div>
+                  <h3 className="font-black text-slate-900 uppercase tracking-tight text-lg leading-tight group-hover:text-amber-600 transition-colors">{s.name}</h3>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase mt-1">{s.location || 'Location not set'}</p>
+                  <div className="mt-4 flex items-center gap-1 text-[9px] font-black text-slate-300 uppercase tracking-widest group-hover:text-amber-500 transition-colors">
+                    Open Ledger →
+                  </div>
+                </button>
+              ))}
+              {state.masterData.fuelStations.length === 0 && (
+                <div className="col-span-3 text-center py-20 text-slate-300 font-black uppercase tracking-widest text-sm">
+                  No stations configured. Add them in Master Data → Fuel Stations.
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      }
+      case 'station-ledger': {
         const station = state.masterData.fuelStations.find(s => s.id === navParams?.stationId);
-        if (!station) return <div className="p-8 text-center font-bold text-slate-400">Station not found. <button onClick={() => setActiveView('fuel-agent')} className="text-slate-900 underline">Go Back</button></div>;
+        if (!station) return <div className="p-8 text-center font-bold text-slate-400">Station not found. <button onClick={() => setActiveView('station-ledgers')} className="text-slate-900 underline">View all stations</button></div>;
         return (
           <StationLedger 
             station={station}
+            allStations={state.masterData.fuelStations}
             fuelLogs={state.fuelLogs}
             payments={state.stationPayments}
             trucks={state.trucks}
+            miscFuelEntries={state.miscFuelEntries}
+            onAddMiscFuelEntry={async (e) => { await dbService.addMiscFuelEntry(e); refreshState(); }}
+            onDeleteMiscFuelEntry={async (id) => { await dbService.deleteMiscFuelEntry(id); refreshState(); }}
             onAddPayment={async (p) => { await dbService.addStationPayment(p); refreshState(); }}
             onDeletePayment={async (id) => { await dbService.deleteStationPayment(id); refreshState(); }}
-            onBack={() => setActiveView('fuel-agent')}
+            onBack={() => setActiveView('station-ledgers')}
+            onNavigateToStation={(stationId) => {
+              setNavParams({ stationId });
+              // activeView stays 'station-ledger', just navParams changes — force re-render
+              setActiveView('station-ledgers');
+              setTimeout(() => setActiveView('station-ledger'), 0);
+            }}
           />
         );
+      }
       case 'fuel-analytics':
         return <FuelAnalytics 
           state={state} 
