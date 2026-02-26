@@ -11,16 +11,19 @@ interface Props {
   payments: StationPayment[];
   trucks: Truck[];
   miscFuelEntries: MiscFuelEntry[];
+  partyDieselTransactions: any[];
+  dieselParties: any[];
   onAddMiscFuelEntry: (entry: MiscFuelEntry) => Promise<void>;
   onDeleteMiscFuelEntry: (id: string) => Promise<void>;
   onAddPayment: (payment: StationPayment) => Promise<void>;
   onDeletePayment: (id: string) => Promise<void>;
+  onAddPartyTransaction: (tx: any) => Promise<void>;
   onBack: () => void;
   onNavigateToStation: (stationId: string) => void;
 }
 
 const StationLedger: React.FC<Props> = ({ 
-  station, allStations, fuelLogs, payments, trucks, miscFuelEntries, onAddMiscFuelEntry, onDeleteMiscFuelEntry, onAddPayment, onDeletePayment, onBack, onNavigateToStation 
+  station, allStations, fuelLogs, payments, trucks, miscFuelEntries, partyDieselTransactions, dieselParties, onAddMiscFuelEntry, onDeleteMiscFuelEntry, onAddPayment, onDeletePayment, onAddPartyTransaction, onBack, onNavigateToStation 
 }) => {
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [showMiscModal, setShowMiscModal] = useState(false);
@@ -35,6 +38,27 @@ const StationLedger: React.FC<Props> = ({
     date: new Date().toISOString().split('T')[0],
     amount: 0,
     paymentMethod: 'Online Transfer',
+    remarks: ''
+  });
+
+  const [showTransferModal, setShowTransferModal] = useState(false);
+  const [newTransfer, setNewTransfer] = useState({
+    partyId: '',
+    fuelLiters: 0,
+    dieselPrice: 90.55,
+    date: new Date().toISOString().split('T')[0],
+    invoiceNo: '',
+    remarks: ''
+  });
+
+  const [showReceiveModal, setShowReceiveModal] = useState(false);
+  const [newReceive, setNewReceive] = useState({
+    mode: 'PUMP' as 'PUMP' | 'CUSTOMER',
+    sourceId: '',
+    fuelLiters: 0,
+    dieselPrice: 90.55,
+    date: new Date().toISOString().split('T')[0],
+    invoiceNo: '',
     remarks: ''
   });
 
@@ -61,8 +85,10 @@ const StationLedger: React.FC<Props> = ({
       }));
 
     // 2. Misc Purchases recorded AGAINST this station (Debt owed to this station)
+    // Exclude bridge entries (those linked to a PartyDieselTransaction) to avoid duplicates
+    const bridgeEntryIds = new Set(partyDieselTransactions.filter(t => t.bridgeEntryId).map(t => t.bridgeEntryId));
     const miscOut = miscFuelEntries
-      .filter(m => m.stationId === station.id)
+      .filter(m => m.stationId === station.id && !bridgeEntryIds.has(m.id))
       .map(m => ({
         id: m.id,
         date: m.date,
@@ -76,8 +102,9 @@ const StationLedger: React.FC<Props> = ({
       }));
 
     // 3. Bulk Received INWARDS (If this is an internal Tanker)
+    // Also exclude bridge entries to avoid duplicates with partyTx
     const miscIn = station.isInternal ? miscFuelEntries
-      .filter(m => m.destinationStationId === station.id)
+      .filter(m => m.destinationStationId === station.id && !bridgeEntryIds.has(m.id))
       .map(m => ({
         id: m.id + '_recv',
         date: m.date,
@@ -90,7 +117,7 @@ const StationLedger: React.FC<Props> = ({
         isMisc: true
       })) : [];
 
-    // 4. Financial Payments (Cradit against this station)
+    // 4. Financial Payments (Credit against this station)
     const stationPayments = payments
       .filter(p => p.stationId === station.id || p.stationId === station.name)
       .map(p => ({
@@ -104,10 +131,34 @@ const StationLedger: React.FC<Props> = ({
         raw: p
       }));
 
-    return [...stationLogs, ...miscOut, ...miscIn, ...stationPayments].sort((a, b) => 
+    // 5. Party Transactions (If this is an internal Tanker)
+    const partyTx = station.isInternal ? partyDieselTransactions
+      .filter(t => t.destTankerId === station.id || t.sourceId === station.id)
+      .map(t => {
+        const isReceiving = t.destTankerId === station.id;
+        const partyName = dieselParties?.find((p: any) => p.id === t.partyId)?.name || 'Party';
+        
+        return {
+          id: t.id,
+          date: t.date,
+          type: isReceiving ? 'STOCK_IN' as const : 'PURCHASE' as const,
+          description: isReceiving 
+            ? `Customer Receipt: ${partyName} | Inv: ${t.invoiceNo || 'N/A'}`
+            : `Supplier Repayment: ${partyName} | Inv: ${t.invoiceNo || 'N/A'}`,
+          quantity: t.fuelLiters || 0,
+          rate: t.dieselPrice || 0,
+          amount: t.amount || ((t.fuelLiters || 0) * (t.dieselPrice || 0)),
+          raw: t,
+          isParty: true
+        };
+      }) : [];
+
+    const combined = [...stationLogs, ...miscOut, ...miscIn, ...stationPayments, ...partyTx];
+    
+    return combined.sort((a, b) => 
       new Date(b.date).getTime() - new Date(a.date).getTime()
     );
-  }, [fuelLogs, payments, station.id, station.name, station.isInternal, trucks, miscFuelEntries, allStations]);
+  }, [fuelLogs, payments, station.id, station.name, station.isInternal, trucks, miscFuelEntries, allStations, partyDieselTransactions, dieselParties]);
 
   // Apply Filters
   const filteredLedger = useMemo(() => {
@@ -120,49 +171,54 @@ const StationLedger: React.FC<Props> = ({
     });
   }, [ledger, searchTerm, filterType, startDate, endDate]);
 
-  const summary = useMemo(() => {
-    if (station.isInternal) {
-      const totalStockIn = filteredLedger
-        .filter(item => item.type === 'STOCK_IN')
-        .reduce((sum, item) => sum + (item.quantity || 0), 0);
-        
-      const totalDispensed = filteredLedger
-        .filter(item => item.type === 'PURCHASE')
-        .reduce((sum, item) => sum + (item.quantity || 0), 0);
-        
-      return {
-        isInternal: true,
-        totalStockIn,
-        totalDispensed,
-        balance: totalStockIn - totalDispensed,
-        totalLiters: 0,
-        totalPurchased: 0,
-        totalPaid: 0
-      };
-    } else {
-      const totalPurchased = filteredLedger
-        .filter(item => item.type === 'PURCHASE')
-        .reduce((sum, item) => sum + item.amount, 0);
-      
-      const totalPaid = filteredLedger
-        .filter(item => item.type === 'PAYMENT')
-        .reduce((sum, item) => sum + item.amount, 0);
+const summary = useMemo(() => {
+  if (station.isInternal) {
+    const stockInItems = filteredLedger.filter(item => item.type === 'STOCK_IN');
+    const purchaseItems = filteredLedger.filter(item => item.type === 'PURCHASE');
 
-      const totalLiters = filteredLedger
-        .filter(item => item.type === 'PURCHASE')
-        .reduce((sum, item) => sum + (item.quantity || 0), 0);
+    const totalStockIn = stockInItems.reduce((sum, item) => sum + (item.quantity || 0), 0);
+    const totalDispensed = purchaseItems.reduce((sum, item) => sum + (item.quantity || 0), 0);
 
-      return {
-        isInternal: false,
-        totalPurchased,
-        totalPaid,
-        totalLiters,
-        balance: totalPurchased - totalPaid,
-        totalStockIn: 0,
-        totalDispensed: 0
-      };
-    }
-  }, [filteredLedger, station.isInternal]);
+    const totalInAmount = stockInItems.reduce((sum, item) => sum + (item.amount || 0), 0);
+    const totalOutAmount = purchaseItems.reduce((sum, item) => sum + (item.amount || 0), 0);
+
+    return {
+      isInternal: true,
+      totalStockIn,
+      totalDispensed,
+      totalInAmount,
+      totalOutAmount,
+      balance: totalStockIn - totalDispensed,
+      totalLiters: 0,
+      totalPurchased: 0,
+      totalPaid: 0
+    };
+  } else {
+    const totalPurchased = filteredLedger
+      .filter(item => item.type === 'PURCHASE')
+      .reduce((sum, item) => sum + item.amount, 0);
+    
+    const totalPaid = filteredLedger
+      .filter(item => item.type === 'PAYMENT')
+      .reduce((sum, item) => sum + item.amount, 0);
+
+    const totalLiters = filteredLedger
+      .filter(item => item.type === 'PURCHASE')
+      .reduce((sum, item) => sum + (item.quantity || 0), 0);
+
+    return {
+      isInternal: false,
+      totalPurchased,
+      totalPaid,
+      totalLiters,
+      balance: totalPurchased - totalPaid,
+      totalStockIn: 0,
+      totalDispensed: 0,
+      totalInAmount: totalPurchased,   // for consistency in total row
+      totalOutAmount: totalPaid        // for consistency in total row
+    };
+  }
+}, [filteredLedger, station.isInternal]);
 
   const exportToExcel = () => {
     const wb = XLSX.utils.book_new();
@@ -184,16 +240,15 @@ const StationLedger: React.FC<Props> = ({
         [`Location: ${address}`],
         [`Report Period: ${dateRangeStr}`],
         [],
-        ["DATE", "DESCRIPTION", "TYPE", "LITERS", "RATE (₹)", "AMOUNT (₹)"]
+        ["DATE", "DESCRIPTION", "CATEGORY", "INWARD (L)", "OUTWARD (L)"]
       ];
       filteredLedger.forEach(item => {
         data.push([
           item.date,
           item.description,
-          item.type,
-          item.quantity,
-          item.rate || '--',
-          item.amount
+          item.type === 'STOCK_IN' ? 'INWARD' : 'OUTWARD',
+          item.type === 'STOCK_IN' ? item.quantity : '--',
+          item.type === 'PURCHASE' ? item.quantity : '--'
         ]);
       });
       data.push([]);
@@ -223,7 +278,7 @@ const StationLedger: React.FC<Props> = ({
         [`Location: ${address}`],
         [`Report Period: ${dateRangeStr}`],
         [],
-        ["DATE", "DESCRIPTION", "LITERS", "RATE (₹)", "DEBIT (₹)", "CREDIT (₹)"]
+        ["DATE", "DESCRIPTION", "LITERS", "RATE (₹)", station.isInternal ? "INWARD (₹)" : "DEBIT (₹)", station.isInternal ? "OUTWARD (₹)" : "CREDIT (₹)"]
       ];
       filteredLedger.forEach(item => {
         data.push([
@@ -278,19 +333,16 @@ const StationLedger: React.FC<Props> = ({
       doc.setFontSize(7); doc.setTextColor(100);
       doc.text(`IN: ${summary.totalStockIn?.toLocaleString()} L  OUT: ${summary.totalDispensed?.toLocaleString()} L`, 145, 57);
 
-      const tableData = filteredLedger.map(item => [
-        item.date,
-        item.description,
-        item.type === 'STOCK_IN' ? 'Stock IN' : 'Dispensed',
-        `${item.quantity} L`,
-        item.rate ? `₹${item.rate}` : '--',
-        item.amount ? `₹${item.amount.toLocaleString()}` : '--'
-      ]);
-
       autoTable(doc, {
         startY: 70,
-        head: [['Date', 'Description', 'Type', 'Liters', 'Rate', 'Amount']],
-        body: tableData,
+        head: [['Date', 'Description', 'Type', 'Inward (L)', 'Outward (L)']],
+        body: filteredLedger.map(item => [
+          item.date,
+          item.description,
+          item.type === 'STOCK_IN' ? 'INWARD' : 'OUTWARD',
+          item.type === 'STOCK_IN' ? `${item.quantity} L` : '--',
+          item.type === 'PURCHASE' ? `${item.quantity} L` : '--'
+        ]),
         theme: 'striped',
         headStyles: { fillColor: [29, 78, 216], fontSize: 9, halign: 'center' },
         bodyStyles: { fontSize: 8 },
@@ -394,6 +446,83 @@ const StationLedger: React.FC<Props> = ({
     });
   };
 
+  const handleSaveTransfer = async () => {
+    if (!newTransfer.partyId || !newTransfer.fuelLiters) return;
+    
+    // Double Entry: 
+    // This creates a SETTLE_LITERS transaction on the Party side
+    // And because StationLedger includes SETTLE_LITERS where sourceId = tankerId,
+    // it appears as OUTWARD in this ledger too.
+    await onAddPartyTransaction({
+      id: crypto.randomUUID(),
+      partyId: newTransfer.partyId,
+      date: newTransfer.date,
+      type: 'SETTLE_LITERS',
+      fuelLiters: Number(newTransfer.fuelLiters),
+      dieselPrice: Number(newTransfer.dieselPrice),
+      amount: Number(newTransfer.fuelLiters) * Number(newTransfer.dieselPrice),
+      sourceId: station.id,
+      invoiceNo: newTransfer.invoiceNo,
+      remarks: newTransfer.remarks
+    });
+    
+    setShowTransferModal(false);
+    setNewTransfer({
+      partyId: '',
+      fuelLiters: 0,
+      dieselPrice: 90.55,
+      date: new Date().toISOString().split('T')[0],
+      invoiceNo: '',
+      remarks: ''
+    });
+  };
+
+  const handleSaveReceive = async () => {
+    if (!newReceive.sourceId || !newReceive.fuelLiters) return;
+
+    if (newReceive.mode === 'PUMP') {
+      // Station -> Tanker (Misc Entry)
+      await onAddMiscFuelEntry({
+        id: crypto.randomUUID(),
+        stationId: newReceive.sourceId,
+        date: newReceive.date,
+        vehicleDescription: `Bulk Receipt: ${station.name}`,
+        usageType: 'BULK_TRANSFER',
+        fuelLiters: Number(newReceive.fuelLiters),
+        dieselPrice: Number(newReceive.dieselPrice),
+        amount: Number(newReceive.fuelLiters) * Number(newReceive.dieselPrice),
+        invoiceNo: newReceive.invoiceNo,
+        remarks: newReceive.remarks,
+        destinationStationId: station.id
+      });
+    } else {
+      // Customer -> Tanker (Party Tx)
+      await onAddPartyTransaction({
+        id: crypto.randomUUID(),
+        partyId: newReceive.sourceId,
+        date: newReceive.date,
+        type: 'DIESEL_RECEIVED',
+        fuelLiters: Number(newReceive.fuelLiters),
+        dieselPrice: Number(newReceive.dieselPrice),
+        amount: Number(newReceive.fuelLiters) * Number(newReceive.dieselPrice),
+        destTankerId: station.id,
+        invoiceNo: newReceive.invoiceNo,
+        remarks: newReceive.remarks
+      });
+    }
+
+    setShowReceiveModal(false);
+    setNewReceive({
+      mode: 'PUMP',
+      sourceId: '',
+      fuelLiters: 0,
+      dieselPrice: 90.55,
+      date: new Date().toISOString().split('T')[0],
+      invoiceNo: '',
+      remarks: ''
+    });
+  };
+
   return (
     <div className="space-y-6">
       {/* HEADER */}
@@ -432,20 +561,28 @@ const StationLedger: React.FC<Props> = ({
           </h1>
         </div>
         <div className="flex gap-2 w-full sm:w-auto">
+          {station.isInternal && (
+            <>
+              <button 
+                onClick={() => setShowReceiveModal(true)}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-4 rounded-[1.5rem] font-black uppercase text-xs tracking-widest shadow-xl active:scale-95 transition-all flex-1 sm:flex-initial"
+              >
+                Receive from
+              </button>
+              <button 
+                onClick={() => setShowTransferModal(true)}
+                className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-4 rounded-[1.5rem] font-black uppercase text-xs tracking-widest shadow-xl active:scale-95 transition-all flex-1 sm:flex-initial"
+              >
+                Transfer to
+              </button>
+            </>
+          )}
           <button 
             onClick={() => setShowMiscModal(true)}
-            className="bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-4 rounded-[1.5rem] font-black uppercase text-xs tracking-widest shadow-xl active:scale-95 transition-all flex-1 sm:flex-initial"
+            className="bg-slate-900 text-white px-6 py-4 rounded-[1.5rem] font-black uppercase text-xs tracking-widest shadow-xl active:scale-95 transition-all flex-1 sm:flex-initial"
           >
             + Record Fuel Entry
           </button>
-          {!station.isInternal && (
-            <button 
-              onClick={() => setShowPaymentModal(true)}
-              className="bg-slate-900 text-white px-6 py-4 rounded-[1.5rem] font-black uppercase text-xs tracking-widest shadow-xl active:scale-95 transition-all flex-1 sm:flex-initial"
-            >
-              + Record Payment
-            </button>
-          )}
         </div>
       </div>
 
@@ -456,12 +593,12 @@ const StationLedger: React.FC<Props> = ({
             <div className="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm">
               <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Stock IN</p>
               <p className="text-2xl font-black text-slate-900">{summary.totalStockIn?.toLocaleString()} L</p>
-              <p className="text-[10px] font-bold text-emerald-500 mt-1">From Bulk Transfers</p>
+              <p className="text-[10px] font-bold text-emerald-500 mt-1">From All Inward Sources</p>
             </div>
             <div className="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm">
               <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Dispensed</p>
               <p className="text-2xl font-black text-amber-600">{summary.totalDispensed?.toLocaleString()} L</p>
-              <p className="text-[10px] font-bold text-amber-500 mt-1">To Fleet Vehicles</p>
+              <p className="text-[10px] font-bold text-amber-500 mt-1">Outward Consumption</p>
             </div>
             <div className={`p-6 rounded-[2rem] border shadow-sm ${summary.balance > 0 ? 'bg-blue-50 border-blue-100' : 'bg-slate-50 border-slate-100'}`}>
               <p className="text-[10px] font-black opacity-50 uppercase tracking-widest mb-1 text-blue-900">Current Inventory</p>
@@ -538,17 +675,22 @@ const StationLedger: React.FC<Props> = ({
                  </div>
 
                  <select 
-                    className="p-3 bg-slate-50 border border-slate-100 rounded-xl font-bold text-xs uppercase"
-                    value={filterType}
-                    onChange={e => setFilterType(e.target.value as any)}
-                 >
-                    <option value="ALL">ALL TYPES</option>
-                    <option value="PURCHASE">PURCHASES</option>
-                    {station.isInternal
-                      ? <option value="STOCK_IN">STOCK RECEIVED</option>
-                      : <option value="PAYMENT">PAYMENTS</option>
-                    }
-                 </select>
+                      className="p-3 bg-slate-50 border border-slate-100 rounded-xl font-bold text-xs uppercase"
+                      value={filterType}
+                      onChange={e => setFilterType(e.target.value as any)}
+                    >
+                      <option value="ALL">ALL TYPES</option>
+
+                      <option value="PURCHASE">
+                        {station.isInternal ? "STOCK OUT" : "PURCHASES"}
+                      </option>
+
+                      {station.isInternal ? (
+                        <option value="STOCK_IN">STOCK RECEIVED</option>
+                      ) : (
+                        <option value="PAYMENT">PAYMENTS</option>
+                      )}
+                   </select>
 
                  <div className="flex gap-2 w-full sm:w-auto mt-2 sm:mt-0">
                     <button onClick={exportToExcel} className="flex-1 sm:flex-initial px-6 py-3 bg-emerald-50 text-emerald-600 border border-emerald-100 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-emerald-100 transition-all">Excel</button>
@@ -558,30 +700,42 @@ const StationLedger: React.FC<Props> = ({
            </div>
            
            <div className="flex gap-4">
-              <span className="flex items-center gap-1 text-[9px] font-black text-slate-400 uppercase"><span className="w-2 h-2 rounded-full bg-emerald-500"></span> Purchase</span>
-              <span className="flex items-center gap-1 text-[9px] font-black text-slate-400 uppercase"><span className="w-2 h-2 rounded-full bg-slate-900"></span> Payment</span>
+              <span className="flex items-center gap-1 text-[9px] font-black text-slate-400 uppercase"><span className="w-2 h-2 rounded-full bg-emerald-500"></span> {station.isInternal ? 'INWARD' : 'Purchase'}</span>
+              <span className="flex items-center gap-1 text-[9px] font-black text-slate-400 uppercase"><span className="w-2 h-2 rounded-full bg-slate-900"></span> {station.isInternal ? 'OUTWARD' : 'Payment'}</span>
            </div>
         </div>
         <div className="overflow-x-auto scrollbar-hide">
+          {/* 2. REPLACE YOUR ENTIRE <table> ... </table> BLOCK with this updated version */}
           <table className="w-full text-left text-xs">
             <thead className="bg-slate-50 text-slate-400 font-black uppercase tracking-widest">
               <tr>
                 <th className="px-8 py-5">Date</th>
                 <th className="px-8 py-5">Vehicle / Method</th>
                 <th className="px-8 py-5 text-center">Liters / Rate</th>
-                <th className="px-8 py-5 text-right">Debit (₹)</th>
-                <th className="px-8 py-5 text-right">Credit (₹)</th>
+                <th className="px-8 py-5 text-right whitespace-nowrap">
+                  {station.isInternal ? 'INWARD (L & ₹)' : 'Debit (₹)'}
+                </th>
+                <th className="px-8 py-5 text-right whitespace-nowrap">
+                  {station.isInternal ? 'OUTWARD (L & ₹)' : 'Credit (₹)'}
+                </th>
                 <th className="px-8 py-5 text-right">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
-               {filteredLedger.map((item) => (
+              {filteredLedger.map((item) => (
                 <tr key={item.id} className="hover:bg-slate-50 transition-colors">
                   <td className="px-8 py-4 font-bold text-slate-500">{item.date}</td>
                   <td className="px-8 py-4">
-                    <span className={`font-black uppercase tracking-tighter text-sm ${item.type === 'PURCHASE' ? 'text-slate-900' : 'text-emerald-600'}`}>
-                      {item.description}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className={`font-black uppercase tracking-tighter text-sm ${item.type === 'PURCHASE' ? 'text-slate-900' : 'text-emerald-600'}`}>
+                        {item.description}
+                      </span>
+                      {station.isInternal && (
+                        <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest ${item.type === 'STOCK_IN' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>
+                          {item.type === 'STOCK_IN' ? 'INWARD' : 'OUTWARD'}
+                        </span>
+                      )}
+                    </div>
                     {item.type === 'PAYMENT' && (
                       <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest">Manual Settlement</p>
                     )}
@@ -589,17 +743,51 @@ const StationLedger: React.FC<Props> = ({
                   <td className="px-8 py-4 text-center">
                     {item.type === 'PURCHASE' || item.type === 'STOCK_IN' ? (
                       <div>
-                        <span className="font-black text-slate-900">{item.quantity} L</span>
-                        <p className="text-[9px] text-slate-400 font-bold">@ ₹{item.rate}</p>
+                        <span className={`font-black ${item.type === 'STOCK_IN' ? 'text-emerald-700' : 'text-slate-900'}`}>
+                          {item.quantity} L
+                        </span>
+                        <p className="text-[9px] text-slate-500 font-bold">
+                          @ ₹{item.rate}
+                        </p>
+                      </div>
+                    ) : (
+                      '--'
+                    )}
+                  </td>
+
+                  {/* DIESEL IN / Debit Column - NOW SHOWS BOTH LITERS + AMOUNT */}
+                  <td className="px-8 py-4 text-right">
+                    {station.isInternal && item.type === 'STOCK_IN' ? (
+                      <div className="space-y-0.5">
+                        <div className="font-black text-emerald-700 text-md leading-none">
+                          {item.quantity} L
+                        </div>
+                        <div className="text-emerald-600 font-semibold">₹{item.amount.toLocaleString()}</div>
+                      </div>
+                    ) : !station.isInternal && item.type === 'PURCHASE' ? (
+                      <div className="space-y-0.5">
+                        <div className="font-black text-slate-900 text-md leading-none">
+                          {item.quantity} L
+                        </div>
+                        <div className="text-slate-900 font-semibold">₹{item.amount.toLocaleString()}</div>
                       </div>
                     ) : '--'}
                   </td>
-                  <td className="px-8 py-4 text-right font-black text-slate-900">
-                    {item.type === 'PURCHASE' || item.type === 'STOCK_IN' ? `₹${item.amount.toLocaleString()}` : '--'}
+
+                  {/* DIESEL OUT / Credit Column */}
+                  <td className="px-8 py-4 text-right">
+                    {station.isInternal && item.type === 'PURCHASE' ? (
+                      <div className="space-y-0.5">
+                        <div className="font-black text-amber-600 text-md leading-none">
+                          {item.quantity} L
+                        </div>
+                        <div className="text-amber-600 font-semibold">₹{item.amount.toLocaleString()}</div>
+                      </div>
+                    ) : !station.isInternal && item.type === 'PAYMENT' ? (
+                      <div className="font-black text-emerald-600 text-md">₹{item.amount.toLocaleString()}</div>
+                    ) : '--'}
                   </td>
-                  <td className="px-8 py-4 text-right font-black text-emerald-600">
-                    {item.type === 'PAYMENT' ? `₹${item.amount.toLocaleString()}` : '--'}
-                  </td>
+
                   <td className="px-8 py-4 text-right">
                     {item.type === 'PAYMENT' ? (
                       <button 
@@ -619,7 +807,7 @@ const StationLedger: React.FC<Props> = ({
                   </td>
                 </tr>
               ))}
-              {ledger.length === 0 && (
+              {filteredLedger.length === 0 && (
                 <tr>
                   <td colSpan={6} className="px-8 py-12 text-center text-slate-400 font-bold uppercase tracking-widest text-xs">
                     No transactions found for this station.
@@ -627,7 +815,59 @@ const StationLedger: React.FC<Props> = ({
                 </tr>
               )}
             </tbody>
-          </table>
+
+            {/* GRAND TOTAL ROW — BOTH LITERS + AMOUNT IN DIESEL IN / DIESEL OUT COLUMNS */}
+            <tfoot>
+              <tr className="bg-slate-100 border-t-4 border-slate-300">
+                <td colSpan={3} className="px-8 py-6 text-right font-black uppercase tracking-widest text-xs text-slate-600">
+                  GRAND TOTALS
+                </td>
+                
+                {/* DIESEL IN / Debit Total */}
+                <td className="px-8 py-6 text-right border-r border-slate-200">
+                  {station.isInternal ? (
+                    <div className="space-y-1">
+                      <div className="font-black text-emerald-700 text-2xl leading-none">
+                        {summary.totalStockIn.toLocaleString()} L
+                      </div>
+                      <div className="text-emerald-600 font-bold text-lg">
+                        ₹{summary.totalInAmount.toLocaleString()}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      <div className="font-black text-slate-900 text-2xl leading-none">
+                        {summary.totalLiters.toFixed(3)} L
+                      </div>
+                      <div className="text-slate-900 font-bold text-lg">
+                        ₹{summary.totalPurchased.toLocaleString()}
+                      </div>
+                    </div>
+                  )}
+                </td>
+
+                {/* DIESEL OUT / Credit Total */}
+                <td className="px-8 py-6 text-right">
+                  {station.isInternal ? (
+                    <div className="space-y-1">
+                      <div className="font-black text-amber-600 text-2xl leading-none">
+                        {summary.totalDispensed.toLocaleString()} L
+                      </div>
+                      <div className="text-amber-600 font-bold text-lg">
+                        ₹{summary.totalOutAmount.toLocaleString()}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="font-black text-emerald-600 text-2xl">
+                      ₹{summary.totalPaid.toLocaleString()}
+                    </div>
+                  )}
+                </td>
+
+                <td className="px-8 py-6"></td>
+              </tr>
+            </tfoot>
+          </table>  
         </div>
       </div>
 
@@ -862,6 +1102,199 @@ const StationLedger: React.FC<Props> = ({
                 className="w-full py-5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-[1.5rem] font-black uppercase text-xs tracking-widest shadow-2xl active:scale-95 transition-all mt-2"
               >
                 Save Fuel Entry
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* RECEIVE FROM SOURCE MODAL */}
+      {showReceiveModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setShowReceiveModal(false)} />
+          <div className="bg-white rounded-[2.5rem] w-full max-w-md relative shadow-2xl animate-modalUp overflow-hidden border border-slate-100">
+            <div className="p-8 border-b border-slate-50 flex justify-between items-center bg-emerald-50/50">
+              <div>
+                <h2 className="text-xl font-black text-slate-900 uppercase tracking-tight">Receive Diesel</h2>
+                <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest mt-0.5">Stock Inward to Tanker</p>
+              </div>
+              <button onClick={() => setShowReceiveModal(false)} className="w-10 h-10 flex items-center justify-center rounded-full hover:bg-white transition-colors text-slate-400">✕</button>
+            </div>
+
+            <div className="p-8 space-y-6">
+              {/* Mode Switcher */}
+              <div className="flex bg-slate-100 p-1 rounded-2xl gap-1">
+                <button 
+                  onClick={() => setNewReceive(prev => ({ ...prev, mode: 'PUMP', sourceId: '' }))}
+                  className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${newReceive.mode === 'PUMP' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                >
+                  From Pump
+                </button>
+                <button 
+                  onClick={() => setNewReceive(prev => ({ ...prev, mode: 'CUSTOMER', sourceId: '' }))}
+                  className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${newReceive.mode === 'CUSTOMER' ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-400 hover:text-emerald-600'}`}
+                >
+                  From Customer
+                </button>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase ml-1">
+                  {newReceive.mode === 'PUMP' ? 'Select Petrol Pump' : 'Select Customer'}
+                </label>
+                <select
+                  className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold outline-none ring-emerald-500 focus:ring-2 transition-all h-[58px]"
+                  value={newReceive.sourceId}
+                  onChange={e => setNewReceive(prev => ({ ...prev, sourceId: e.target.value }))}
+                >
+                  <option value="">-- Choose {newReceive.mode === 'PUMP' ? 'Pump' : 'Customer'} --</option>
+                  {newReceive.mode === 'PUMP' 
+                    ? allStations.filter(s => !s.isInternal).map(s => (
+                        <option key={s.id} value={s.id}>{s.name}</option>
+                      ))
+                    : dieselParties?.filter((p:any) => p.type === 'CUSTOMER').map((p: any) => (
+                        <option key={p.id} value={p.id}>{p.name}</option>
+                      ))
+                  }
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Liters</label>
+                  <input
+                    type="number"
+                    placeholder="0.00"
+                    className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-black text-lg outline-none ring-emerald-500 focus:ring-2 transition-all"
+                    value={newReceive.fuelLiters || ''}
+                    onChange={e => setNewReceive(prev => ({ ...prev, fuelLiters: Number(e.target.value) }))}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Rate (₹/L)</label>
+                  <input
+                    type="number"
+                    placeholder="0.00"
+                    className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-black text-lg outline-none ring-emerald-500 focus:ring-2 transition-all"
+                    value={newReceive.dieselPrice || ''}
+                    onChange={e => setNewReceive(prev => ({ ...prev, dieselPrice: Number(e.target.value) }))}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Date</label>
+                  <input
+                    type="date"
+                    className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold outline-none ring-emerald-500 focus:ring-2 transition-all"
+                    value={newReceive.date}
+                    onChange={e => setNewReceive(prev => ({ ...prev, date: e.target.value }))}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Invoice No.</label>
+                  <input
+                    type="text"
+                    placeholder="Optional"
+                    className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold outline-none ring-emerald-500 focus:ring-2 transition-all"
+                    value={newReceive.invoiceNo}
+                    onChange={e => setNewReceive(prev => ({ ...prev, invoiceNo: e.target.value }))}
+                  />
+                </div>
+              </div>
+
+              <button
+                onClick={handleSaveReceive}
+                disabled={!newReceive.sourceId || !newReceive.fuelLiters}
+                className="w-full py-5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-[1.5rem] font-black uppercase text-xs tracking-widest shadow-2xl active:scale-95 transition-all mt-2"
+              >
+                Record Receipt
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TRANSFER TO SUPPLIER MODAL */}
+      {showTransferModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setShowTransferModal(false)} />
+          <div className="bg-white rounded-[2.5rem] w-full max-w-md relative shadow-2xl animate-modalUp overflow-hidden border border-slate-100">
+            <div className="p-8 border-b border-slate-50 flex justify-between items-center bg-blue-50/50">
+              <div>
+                <h2 className="text-xl font-black text-slate-900 uppercase tracking-tight">Transfer Diesel</h2>
+                <p className="text-[10px] font-bold text-blue-600 uppercase tracking-widest mt-0.5">Repay Supplier from Tanker</p>
+              </div>
+              <button onClick={() => setShowTransferModal(false)} className="w-10 h-10 flex items-center justify-center rounded-full hover:bg-white transition-colors text-slate-400">✕</button>
+            </div>
+
+            <div className="p-8 space-y-6">
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Select Supplier</label>
+                <select
+                  className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold outline-none ring-blue-500 focus:ring-2 transition-all h-[58px]"
+                  value={newTransfer.partyId}
+                  onChange={e => setNewTransfer(prev => ({ ...prev, partyId: e.target.value }))}
+                >
+                  <option value="">-- Choose Supplier --</option>
+                  {dieselParties?.filter((p:any) => p.type === 'SUPPLIER').map((p: any) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Liters</label>
+                  <input
+                    type="number"
+                    placeholder="0.00"
+                    className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-black text-lg outline-none ring-blue-500 focus:ring-2 transition-all"
+                    value={newTransfer.fuelLiters || ''}
+                    onChange={e => setNewTransfer(prev => ({ ...prev, fuelLiters: Number(e.target.value) }))}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Rate (₹/L)</label>
+                  <input
+                    type="number"
+                    placeholder="0.00"
+                    className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-black text-lg outline-none ring-blue-500 focus:ring-2 transition-all"
+                    value={newTransfer.dieselPrice || ''}
+                    onChange={e => setNewTransfer(prev => ({ ...prev, dieselPrice: Number(e.target.value) }))}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Date</label>
+                  <input
+                    type="date"
+                    className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold outline-none ring-blue-500 focus:ring-2 transition-all"
+                    value={newTransfer.date}
+                    onChange={e => setNewTransfer(prev => ({ ...prev, date: e.target.value }))}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Invoice No.</label>
+                  <input
+                    type="text"
+                    placeholder="Optional"
+                    className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold outline-none ring-blue-500 focus:ring-2 transition-all"
+                    value={newTransfer.invoiceNo}
+                    onChange={e => setNewTransfer(prev => ({ ...prev, invoiceNo: e.target.value }))}
+                  />
+                </div>
+              </div>
+
+              <button
+                onClick={handleSaveTransfer}
+                disabled={!newTransfer.partyId || !newTransfer.fuelLiters}
+                className="w-full py-5 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-[1.5rem] font-black uppercase text-xs tracking-widest shadow-2xl active:scale-95 transition-all mt-2"
+              >
+                Record Transfer
               </button>
             </div>
           </div>

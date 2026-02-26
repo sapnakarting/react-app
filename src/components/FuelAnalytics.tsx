@@ -125,6 +125,7 @@ const FuelAnalytics: React.FC<{
     const stats: Record<string, { liters: number, cost: number }> = {};
     // 1. Fleet fuel logs
     filteredFuelLogs.forEach(log => {
+      if (log.partyId) return; // Skip logs fueled from parties, they have their own ledger
       const sid = log.stationId || 'UNKNOWN';
       if (!stats[sid]) stats[sid] = { liters: 0, cost: 0 };
       stats[sid].liters += (log.fuelLiters || 0);

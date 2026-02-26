@@ -156,6 +156,7 @@ export interface FuelLog {
   truckId: string;
   driverId: string;
   stationId?: string; // New: Tracks which pump issued fuel
+  partyId?: string;   // Set when fueled from a diesel party account
   date: string;
   attributionDate: string; // Target Production Date
   entryType: 'PER_TRIP' | 'FULL_TANK';
@@ -189,6 +190,35 @@ export interface MiscFuelEntry {
   receiverName?: string;
   remarks?: string;
   destinationStationId?: string; // For BULK_TRANSFER: Which internal tanker received it?
+}
+
+export interface DieselParty {
+  id: string;
+  name: string;
+  type: 'SUPPLIER' | 'CUSTOMER' | 'OTHER';
+  contact?: string;
+  phone?: string;
+  notes?: string;
+}
+
+export interface PartyDieselTransaction {
+  id: string;
+  partyId: string;
+  date: string;
+  // BORROW        = party gave us diesel (we owe them litres)
+  // SETTLE_LITERS = we repaid them in litres (from our tanker)
+  // SETTLE_CASH   = we paid them in ₹ (couldn't give litres)
+  // DIESEL_RECEIVED = customer gave us diesel as payment
+  type: 'BORROW' | 'SETTLE_LITERS' | 'SETTLE_CASH' | 'DIESEL_RECEIVED';
+  fuelLiters?: number;   // litres involved (not for SETTLE_CASH)
+  dieselPrice?: number;  // ₹/L at the time (optional)
+  amount?: number;       // ₹ value — for SETTLE_CASH; or calculated for others
+  fuelLogId?: string;    // links to FuelLog.id when type=BORROW (auto-created by agent)
+  sourceId?: string;     // New: stationId/tankerId where diesel was taken from for SETTLE_LITERS
+  destTankerId?: string; // links to a FuelStation.id when DIESEL_RECEIVED stocks a tanker
+  bridgeEntryId?: string; // New: link to the MiscFuelEntry created for bridge logic
+  invoiceNo?: string;
+  remarks?: string;
 }
 
 export interface TripLog {
@@ -228,6 +258,7 @@ export interface MasterData {
   tireBrands: string[];
   coalSites: CoalSite[];
   fuelStations: FuelStation[]; // New: Fueling stations master list
+  dieselParties: DieselParty[];
   benchmarks: FuelBenchmarks;
 }
 
@@ -243,6 +274,8 @@ export interface FleetState {
   dailyOdo: DailyOdoEntry[];
   purchaseHistory: TirePurchase[];
   stationPayments: StationPayment[];
+  dieselParties: DieselParty[];
+  partyDieselTransactions: PartyDieselTransaction[];
   masterData: MasterData;
   users: User[];
   currentUser: User | null;

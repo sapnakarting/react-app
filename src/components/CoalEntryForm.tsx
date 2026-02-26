@@ -295,16 +295,16 @@ const CoalEntryForm: React.FC<CoalEntryFormProps> = ({ trucks, drivers, fuelLogs
                   const hasError = gross < tare && trip.grossWeight !== '' && trip.tareWeight !== '';
                   return (
                     <div key={trip.id} className={`grid grid-cols-1 md:grid-cols-12 gap-2 items-center bg-white border ${hasError ? 'border-rose-300' : 'border-slate-100'} p-2 rounded-xl shadow-sm hover:shadow-md transition-all group`}>
-                      <div className="col-span-1 text-left md:text-center font-black text-slate-200 flex justify-between md:block px-1">
+                      <div className="col-span-1 text-left md:text-center font-black text-slate-400 flex justify-between md:block px-1">
                         <span className="md:hidden text-[10px]">TRIP #{idx + 1}</span>
-                        <span className="text-[11px]">{(idx + 1).toString().padStart(2, '0')}</span>
+                        <span className="text-[12px]">{(idx + 1).toString().padStart(2, '0')}</span>
                       </div>
                       <div className="col-span-1 md:col-span-3">
                         <input 
                           ref={el => inputRefs.current[`${trip.id}-passNo`] = el}
                           type="text" 
                           placeholder="Pass No" 
-                          className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg font-black uppercase text-[11px] outline-none focus:ring-2 focus:ring-amber-500 transition-all" 
+                          className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg font-black uppercase text-[12px] outline-none focus:ring-2 focus:ring-amber-500 transition-all" 
                           value={trip.passNo} 
                           onChange={e => updateTrip(trip.id, 'passNo', e.target.value)} 
                           onKeyDown={e => focusNext(e, trip.id, 'passNo')}
@@ -316,7 +316,7 @@ const CoalEntryForm: React.FC<CoalEntryFormProps> = ({ trucks, drivers, fuelLogs
                           type="number" 
                           step="0.001" 
                           placeholder="Gross" 
-                          className={`w-full p-2.5 bg-slate-50 border ${hasError ? 'border-rose-400' : 'border-slate-200'} rounded-lg font-mono font-bold text-slate-900 text-center text-[11px] outline-none focus:ring-2 focus:ring-amber-500 transition-all`} 
+                          className={`w-full p-2.5 bg-slate-50 border ${hasError ? 'border-rose-400' : 'border-slate-200'} rounded-lg font-mono font-bold text-slate-900 text-center text-[12px] outline-none focus:ring-2 focus:ring-amber-500 transition-all`} 
                           value={trip.grossWeight} 
                           onChange={e => updateTrip(trip.id, 'grossWeight', e.target.value)} 
                           onKeyDown={e => focusNext(e, trip.id, 'grossWeight')}
@@ -328,18 +328,18 @@ const CoalEntryForm: React.FC<CoalEntryFormProps> = ({ trucks, drivers, fuelLogs
                           type="number" 
                           step="0.001" 
                           placeholder="Tare" 
-                          className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg font-mono font-bold text-slate-500 text-center text-[11px] outline-none focus:ring-2 focus:ring-amber-500 transition-all" 
+                          className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg font-mono font-bold text-slate-500 text-center text-[12px] outline-none focus:ring-2 focus:ring-amber-500 transition-all" 
                           value={trip.tareWeight} 
                           onChange={e => updateTrip(trip.id, 'tareWeight', e.target.value)} 
                           onKeyDown={e => focusNext(e, trip.id, 'tareWeight')}
                         />
                       </div>
-                      <div className={`col-span-1 text-center font-black font-mono text-[11px] ${hasError ? 'text-rose-500' : 'text-amber-600'} flex justify-between md:block px-2 md:px-0`}>
+                      <div className={`col-span-1 text-center font-black font-mono text-[12px] ${hasError ? 'text-rose-900' : 'text-amber-900'} flex justify-between md:block px-2 md:px-0`}>
                         <span className="md:hidden text-slate-400">NET:</span>
                         {net.toFixed(3)}
                       </div>
                       <div className="col-span-1 text-right">
-                        <button type="button" onClick={() => removeTrip(trip.id)} className="text-rose-300 hover:text-rose-600 font-black text-[9px] uppercase tracking-tighter w-full md:w-auto p-1.5 md:p-0">×</button>
+                        <button type="button" onClick={() => removeTrip(trip.id)} className="text-rose-400 hover:text-rose-600 font-black text-[9px] uppercase tracking-tighter w-full md:w-auto p-1.5 md:p-0">Remove Trip</button>
                       </div>
                     </div>
                   );

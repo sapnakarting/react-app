@@ -15,6 +15,7 @@ const Settings: React.FC<SettingsProps> = ({ masterData, onUpdate }) => {
   const [newLocation, setNewLocation] = useState('');
   const [newIsInternal, setNewIsInternal] = useState(false);
   const [newSiteType, setNewSiteType] = useState<'LOADING' | 'UNLOADING'>('LOADING');
+  const [newPartyType, setNewPartyType] = useState<'SUPPLIER' | 'CUSTOMER'>('SUPPLIER');
   const [success, setSuccess] = useState(false);
   const [benchmarkBuffer, setBenchmarkBuffer] = useState<FuelBenchmarks>(masterData.benchmarks || {
     coalLitersPerTrip: [40, 60],
@@ -27,6 +28,7 @@ const Settings: React.FC<SettingsProps> = ({ masterData, onUpdate }) => {
     { id: 'benchmarks', label: '⛽ Performance Benchmarks' },
     { id: 'coalSites', label: '🌋 Coal Transport Sites' },
     { id: 'fuelStations', label: '⛽ Fueling Stations' },
+    { id: 'dieselParties', label: '🤝 Diesel Parties' },
     { id: 'tireBrands', label: '🛞 Tire Brands' },
     { id: 'materials', label: 'Material Types' },
     { id: 'sites', label: 'Operational Sites' },
@@ -64,8 +66,15 @@ const Settings: React.FC<SettingsProps> = ({ masterData, onUpdate }) => {
       }
       const newStation = { id: crypto.randomUUID(), name: newItem.trim(), location: newLocation.trim() || 'Main Site', isInternal: newIsInternal };
       onUpdate('fuelStations', [...currentList, newStation]);
-      setNewLocation('');
       setNewIsInternal(false);
+    } else if (activeTab === 'dieselParties') {
+      const currentList = masterData.dieselParties || [];
+      if (currentList.find(p => p.name === newItem.trim())) {
+        alert("Party already exists.");
+        return;
+      }
+      const newParty = { id: crypto.randomUUID(), name: newItem.trim(), type: newPartyType, contact: '', phone: '', notes: '' };
+      onUpdate('dieselParties', [...currentList, newParty]);
     } else {
       const currentList = (masterData[activeTab as keyof MasterData] as string[]) || [];
       if (currentList.includes(newItem.trim())) {
@@ -89,6 +98,9 @@ const Settings: React.FC<SettingsProps> = ({ masterData, onUpdate }) => {
     } else if (activeTab === 'fuelStations') {
       const updatedList = (masterData.fuelStations || []).filter(s => s.id !== item.id);
       onUpdate('fuelStations', updatedList);
+    } else if (activeTab === 'dieselParties') {
+      const updatedList = (masterData.dieselParties || []).filter(p => p.id !== item.id);
+      onUpdate('dieselParties', updatedList);
     } else {
       const currentList = (masterData[activeTab as keyof MasterData] as string[]) || [];
       const updatedList = currentList.filter(i => i !== item);
@@ -113,7 +125,7 @@ const Settings: React.FC<SettingsProps> = ({ masterData, onUpdate }) => {
         </div>
 
         <div className="flex flex-col md:flex-row">
-          <div className="w-full md:w-72 bg-slate-50 border-r border-slate-100 p-4 space-y-1 overflow-y-auto max-h-[80vh] scrollbar-hide">
+          <div className="w-full md:w-72 bg-slate-50 border-r border-slate-100 p-4 space-y-1 overflow-y-auto max-h-[80vh]">
             {tabs.map(tab => (
               <button
                 key={tab.id}
@@ -238,20 +250,54 @@ const Settings: React.FC<SettingsProps> = ({ masterData, onUpdate }) => {
                   </label>
                   <button onClick={handleAdd} className="bg-slate-900 text-white py-5 rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl">REGISTER NEW STATION</button>
                 </div>
+              </>
+            ) : activeTab === 'dieselParties' ? (
+              <>
+                <div className="mb-8">
+                  <h3 className="text-xl font-black text-slate-800 mb-1 capitalize">Diesel Party Registry</h3>
+                  <p className="text-[9px] font-bold text-slate-400 uppercase">Manage External Borrow/Lend Accounts</p>
+                </div>
+
+                <div className="flex flex-col sm:flex-row gap-4 mb-8">
+                  <input 
+                    type="text" 
+                    className="flex-1 p-5 bg-slate-50 border border-slate-200 rounded-2xl font-bold" 
+                    placeholder="Party Name (e.g., Sy Motara)..." 
+                    value={newItem} 
+                    onChange={e => setNewItem(e.target.value)} 
+                    onKeyDown={e => e.key === 'Enter' && handleAdd()} 
+                  />
+                  <select 
+                    className="w-full sm:w-48 p-5 bg-slate-50 border border-slate-200 rounded-2xl font-black text-[10px] uppercase"
+                    value={newPartyType}
+                    onChange={e => setNewPartyType(e.target.value as any)}
+                  >
+                    <option value="SUPPLIER">SUPPLIER</option>
+                    <option value="CUSTOMER">CUSTOMER</option>
+                  </select>
+                  <button onClick={handleAdd} className="bg-slate-900 text-white px-8 py-5 rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl">REGISTER</button>
+                </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {(masterData.fuelStations || []).map(station => (
-                    <div key={station.id} className="flex items-center justify-between p-4 bg-white border border-slate-100 rounded-2xl shadow-sm">
+                  {(masterData.dieselParties || []).map(party => (
+                    <div key={party.id} className="flex items-center justify-between p-4 bg-white border border-slate-100 rounded-2xl shadow-sm">
                       <div className="flex flex-col">
                          <div className="flex items-center gap-2">
-                           <span className="font-bold text-slate-700 text-sm">{station.name}</span>
-                           {station.isInternal && <span className="bg-emerald-100 text-emerald-700 text-[8px] font-black tracking-widest uppercase px-2 py-0.5 rounded-full">INTERNAL TANKER</span>}
+                           <span className="font-bold text-slate-700 text-sm">{party.name}</span>
+                           <span className={`text-[8px] font-black tracking-widest uppercase px-2 py-0.5 rounded-full ${
+                             party.type === 'CUSTOMER' ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700'
+                           }`}>{party.type}</span>
                          </div>
-                         <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">{station.location || 'Generic Point'}</span>
+                         <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">{party.contact || 'No Contact Info'}</span>
                       </div>
-                      <button onClick={(e) => handleRemove(e, station)} className="text-rose-400 hover:text-rose-600 font-black text-xl w-8 h-8 rounded-full hover:bg-rose-50 flex items-center justify-center transition-all">&times;</button>
+                      <button onClick={(e) => handleRemove(e, party)} className="text-rose-400 hover:text-rose-600 font-black text-xl w-8 h-8 rounded-full hover:bg-rose-50 flex items-center justify-center transition-all">&times;</button>
                     </div>
                   ))}
+                  {(masterData.dieselParties?.length === 0) && (
+                    <div className="col-span-full py-8 text-center bg-slate-50 border border-slate-100 border-dashed rounded-2xl">
+                      <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest">No Parties Configured</p>
+                    </div>
+                  )}
                 </div>
               </>
             ) : (

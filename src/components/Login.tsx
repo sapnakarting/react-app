@@ -2,6 +2,7 @@
 import React, { useState } from 'react';
 import { authService } from '../services/authService';
 import { User } from '../types';
+import { checkSupabaseConnection } from '../services/supabaseClient';
 
 interface LoginProps {
   onLoginSuccess: (user: User) => void;
@@ -25,8 +26,15 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
       } else {
         setError('Invalid username or password. Please try again.');
       }
-    } catch (err) {
-      setError('Connection error. Please check your network.');
+    } catch (err: any) {
+      console.error('Login error:', err);
+      // Run diagnostic on network failure
+      const diagnostic = await checkSupabaseConnection();
+      if (!diagnostic.success) {
+         setError(diagnostic.message);
+      } else {
+         setError('Connection error. Please check your network and try again.');
+      }
     } finally {
       setLoading(false);
     }

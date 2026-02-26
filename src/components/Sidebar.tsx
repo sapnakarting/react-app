@@ -8,9 +8,11 @@ interface SidebarProps {
   onLogout: () => void;
   isOpen: boolean;        // Controlled from parent
   onClose: () => void;    // Callback to close
+  onRefresh?: () => void;
+  syncStatus?: 'idle' | 'syncing' | 'completed';
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ role, activeView, setActiveView, onLogout, isOpen, onClose }) => {
+const Sidebar: React.FC<SidebarProps> = ({ role, activeView, setActiveView, onLogout, isOpen, onClose, onRefresh, syncStatus = 'idle' }) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
 
   // Define strictly filtered sections based on role
@@ -23,7 +25,7 @@ const Sidebar: React.FC<SidebarProps> = ({ role, activeView, setActiveView, onLo
             links: [
               { id: 'dashboard', label: 'Dashboard', icon: '📊' },
               { id: 'fuel-analytics', label: 'Diesel Audit', icon: '⛽' },
-              { id: 'station-ledgers', label: 'Station Ledgers', icon: '🏛️' },
+              { id: 'station-ledgers', label: 'Ledgers', icon: '📒' },
               { id: 'reports', label: 'Asset Reports', icon: '📋' },
             ]
           },
@@ -58,6 +60,7 @@ const Sidebar: React.FC<SidebarProps> = ({ role, activeView, setActiveView, onLo
             links: [
               { id: 'fuel-agent', label: 'Fueling Entry', icon: '⛽' },
               { id: 'fuel-history', label: 'Fuel History', icon: '📜' },
+              { id: 'station-ledgers', label: 'Ledgers', icon: '📒' },
             ]
           }
         ];
@@ -155,7 +158,27 @@ const Sidebar: React.FC<SidebarProps> = ({ role, activeView, setActiveView, onLo
           ))}
         </nav>
 
-        <div className="p-4 border-t border-slate-800">
+        <div className="p-4 border-t border-slate-800 space-y-2">
+          {onRefresh && (
+            <button 
+              onClick={onRefresh}
+              disabled={syncStatus === 'syncing'}
+              className={`w-full flex items-center px-4 py-3 rounded-xl transition-all font-black text-sm uppercase tracking-widest ${
+                isCollapsed ? 'justify-center' : 'space-x-3'
+              } ${
+                syncStatus === 'completed' 
+                  ? 'bg-emerald-500/20 text-emerald-400' 
+                  : 'text-emerald-400 hover:bg-emerald-500/10'
+              }`}
+            >
+              <span className={`text-xl ${syncStatus === 'syncing' ? 'animate-spin' : ''}`}>
+                {syncStatus === 'completed' ? '✅' : '🔄'}
+              </span>
+              {!isCollapsed && (
+                <span>{syncStatus === 'completed' ? 'Sync Completed' : syncStatus === 'syncing' ? 'Syncing...' : 'Sync Data'}</span>
+              )}
+            </button>
+          )}
           <button 
             onClick={onLogout} 
             className={`w-full flex items-center px-4 py-3 rounded-xl text-slate-400 hover:bg-rose-500/10 hover:text-rose-400 transition-all font-black text-sm uppercase tracking-widest ${isCollapsed ? 'justify-center' : 'space-x-3'}`}

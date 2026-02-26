@@ -9,9 +9,12 @@ interface FuelHistoryProps {
   role: string | null;
   currentUser: any;
   users: any[];
+  onLoadMore?: () => void;
+  hasMore?: boolean;
+  onDeleteLog?: (id: string) => void;
 }
 
-const FuelHistory: React.FC<FuelHistoryProps> = ({ logs, trucks, drivers, role, currentUser, users }) => {
+const FuelHistory: React.FC<FuelHistoryProps> = ({ logs, trucks, drivers, role, currentUser, users, onLoadMore, hasMore, onDeleteLog }) => {
   const [search, setSearch] = useState('');
   const [selectedProof, setSelectedProof] = useState<string | null>(null);
 
@@ -89,13 +92,39 @@ const FuelHistory: React.FC<FuelHistoryProps> = ({ logs, trucks, drivers, role, 
                       <span className="text-slate-300 text-xs italic">No Proof</span>
                     )}
                   </td>
-                  <td className="px-6 py-4 text-right font-black text-amber-600">{log.fuelLiters.toFixed(3)}</td>
+                  <td className="px-6 py-4 text-right">
+                    <div className="flex flex-col items-end">
+                      <span className="font-black text-amber-600">{log.fuelLiters.toFixed(3)} L</span>
+                      {role === 'ADMIN' && onDeleteLog && (
+                        <button 
+                          onClick={() => {
+                            if (window.confirm("Are you sure you want to delete this fueling record? This will also remove any linked ledger entries.")) {
+                              onDeleteLog(log.id);
+                            }
+                          }}
+                          className="text-[9px] font-black text-rose-400 hover:text-rose-600 uppercase tracking-widest mt-1"
+                        >
+                          Delete
+                        </button>
+                      )}
+                    </div>
+                  </td>
                 </tr>
               );
             })}
           </tbody>
           </table>
         </div>
+        {hasMore && (
+          <div className="p-8 text-center bg-slate-50/30 border-t border-slate-50">
+             <button 
+                onClick={onLoadMore}
+                className="px-8 py-3 bg-white border border-slate-200 text-slate-600 rounded-xl font-black uppercase text-[10px] tracking-widest shadow-sm hover:bg-slate-900 hover:text-white transition-all active:scale-95"
+             >
+                Load More Records
+             </button>
+          </div>
+        )}
       </div>
 
       {selectedProof && (

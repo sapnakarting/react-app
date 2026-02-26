@@ -17,14 +17,18 @@ interface AgentProps {
   miningLogs: MiningLog[];
   dailyOdo: DailyOdoEntry[];
   masterData: MasterData;
+  dieselParties?: DieselParty[];
   users: User[];
   onAddLog: (log: FuelLog) => Promise<void> | void;
   onUpdateLog?: (log: FuelLog) => Promise<void> | void;
-  onNavigate?: (view: string, params?: { truckId?: string; date?: string; stationId?: string }) => void;
+  onDeleteLog?: (id: string) => Promise<void> | void;
+  onNavigate?: (view: string, params?: { truckId?: string; date?: string; stationId?: string; partyId?: string }) => void;
 }
 
+import { DieselParty } from '../types';
+
 const FuelAgentView: React.FC<AgentProps> = ({ 
-  currentUser, role, trucks, drivers, fuelLogs, coalLogs, miningLogs, dailyOdo, onAddLog, onUpdateLog, masterData, onNavigate, users
+  currentUser, role, trucks, drivers, fuelLogs, coalLogs, miningLogs, dailyOdo, onAddLog, onUpdateLog, onDeleteLog, masterData, onNavigate, users, dieselParties = []
 }) => {
   // Form State
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -37,6 +41,8 @@ const FuelAgentView: React.FC<AgentProps> = ({
   const [truckHighlightIndex, setTruckHighlightIndex] = useState(-1);
   const [driverHighlightIndex, setDriverHighlightIndex] = useState(-1);
   const [selectedStationId, setSelectedStationId] = useState('');
+  const [selectedPartyId, setSelectedPartyId] = useState('');
+  const [fuelSourceType, setFuelSourceType] = useState<'STATION' | 'PARTY'>('STATION');
   const [odometer, setOdometer] = useState('');
   const [fuelLiters, setFuelLiters] = useState('');
   const [dieselPrice, setDieselPrice] = useState('90.55');
@@ -211,6 +217,8 @@ const FuelAgentView: React.FC<AgentProps> = ({
     setFuelLiters('');
     setDieselPrice('90.55');
     setEntryType('FULL_TANK');
+    setSelectedPartyId('');
+    setFuelSourceType('STATION');
     setPhotos([null, null, null, null]);
     setUploadedUrls([null, null, null, null]);
     setPhotosUploaded(false);
@@ -231,7 +239,17 @@ const FuelAgentView: React.FC<AgentProps> = ({
     setTruckSearch(truck?.plateNumber || '');
     setSelectedDriverId(log.driverId);
     setDriverSearch(driver?.name || '');
-    setSelectedStationId(station?.id || '');
+    
+    if (log.partyId) {
+      setSelectedPartyId(log.partyId);
+      setSelectedStationId('');
+      setFuelSourceType('PARTY');
+    } else {
+      setSelectedStationId(station?.id || '');
+      setSelectedPartyId('');
+      setFuelSourceType('STATION');
+    }
+
     setOdometer(log.odometer.toString());
     setFuelLiters(log.fuelLiters.toString());
     setDieselPrice(log.dieselPrice?.toString() || '90.55');
@@ -373,7 +391,8 @@ const FuelAgentView: React.FC<AgentProps> = ({
         id: editingId || crypto.randomUUID(),
         truckId: selectedTruckId,
         driverId: selectedDriverId,
-        stationId: selectedStationId || undefined,
+        stationId: fuelSourceType === 'STATION' ? selectedStationId : undefined,
+        partyId: fuelSourceType === 'PARTY' ? selectedPartyId : undefined,
         date: fuelingDate,
         attributionDate: attributionDate,
         entryType: entryType,
@@ -398,6 +417,25 @@ const FuelAgentView: React.FC<AgentProps> = ({
       } else {
         if (onAddLog) await onAddLog(logData);
         else await dbService.addFuelLog(logData);
+
+        // If it's a party fuel entry, create a BORROW transaction
+        if (fuelSourceType === 'PARTY' && selectedPartyId) {
+          const truck = trucks.find(t => t.id === selectedTruckId);
+          const liters = parseFloat(fuelLiters);
+          const price = parseFloat(dieselPrice);
+          const tx = {
+            id: crypto.randomUUID(),
+            partyId: selectedPartyId,
+            date: fuelingDate,
+            type: 'BORROW' as const,
+            fuelLiters: liters,
+            dieselPrice: price,
+            amount: liters * price,
+            fuelLogId: logData.id,
+            remarks: `Fueled ${truck?.plateNumber || 'unknown truck'}`
+          };
+          await dbService.addPartyTransaction(tx);
+        }
       }
 
       setLastSavedLog(logData);
@@ -424,8 +462,11 @@ const FuelAgentView: React.FC<AgentProps> = ({
     completedLogs.forEach(l => {
       const truck = trucks.find(t => t.id === l.truckId);
       const driver = drivers.find(d => d.id === l.driverId);
-      // Corrected station lookup to handle both IDs and Names
+      // Corrected station/party lookup to handle both IDs and Names
       const station = masterData.fuelStations.find(s => s.id === l.stationId || s.name === l.stationId);
+      const party = dieselParties.find(p => p.id === l.partyId);
+      const sourceName = party ? party.name : (station?.name || 'N/A');
+      
       const distance = l.odometer - (l.previousOdometer || 0);
       const amount = (l.fuelLiters || 0) * (l.dieselPrice || 0);
       const avg = l.fuelLiters > 0 ? (distance / l.fuelLiters).toFixed(3) : '0.00';
@@ -436,7 +477,7 @@ const FuelAgentView: React.FC<AgentProps> = ({
       data.push({
         'DATE': l.date.split('-').reverse().join('/'),
         'PLATE NO': truck?.plateNumber || 'N/A',
-        'STATION': station?.name || 'N/A',
+        'STATION': sourceName,
         'TYPE': l.entryType === 'FULL_TANK' ? 'FULL' : 'TRIP',
         'LITERS': l.fuelLiters,
         'RATE': l.dieselPrice || 0,
@@ -495,6 +536,9 @@ const FuelAgentView: React.FC<AgentProps> = ({
       const truck = trucks.find(t => t.id === l.truckId);
       const driver = drivers.find(d => d.id === l.driverId);
       const station = masterData.fuelStations.find(s => s.id === l.stationId || s.name === l.stationId);
+      const party = dieselParties.find(p => p.id === l.partyId);
+      const sourceName = party ? party.name : (station?.name || 'Self/Unknown');
+
       const distance = l.odometer - (l.previousOdometer || 0);
       const amount = (l.fuelLiters || 0) * (l.dieselPrice || 0);
       const avg = l.fuelLiters > 0 ? (distance / l.fuelLiters).toFixed(3) : '0.00';
@@ -502,7 +546,7 @@ const FuelAgentView: React.FC<AgentProps> = ({
       return [
         l.date.split('-').reverse().join('/'),
         truck?.plateNumber || '--',
-        station?.name || 'Self/Unknown',
+        sourceName,
         l.entryType === 'FULL_TANK' ? 'FULL' : 'TRIP',
         `${l.fuelLiters.toFixed(3)} L`,
         `${(l.dieselPrice || 0).toFixed(3)}`,
@@ -696,11 +740,53 @@ _via SapnaCarting Portal_`;
                       )}
                   </div>
                   <div className="space-y-1">
-                      <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Fueling Station</label>
-                      <select required className="w-full p-3 sm:p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold outline-none focus:ring-2 focus:ring-amber-500 text-sm sm:text-lg transition-all h-[52px] sm:h-[66px]" value={selectedStationId} onChange={e => setSelectedStationId(e.target.value)}>
-                        <option value="">Choose Station...</option>
-                        {masterData.fuelStations.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                      </select>
+                      <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Fueling Source</label>
+                      <div className="flex bg-slate-100 p-1 rounded-2xl gap-1 mb-2">
+                        <button 
+                          type="button"
+                          onClick={() => setFuelSourceType('STATION')}
+                          className={`flex-1 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all ${fuelSourceType === 'STATION' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                        >
+                          ⛽ Station
+                        </button>
+                        <button 
+                          type="button"
+                          onClick={() => setFuelSourceType('PARTY')}
+                          className={`flex-1 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all ${fuelSourceType === 'PARTY' ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-400 hover:text-emerald-500'}`}
+                        >
+                          🤝 Party
+                        </button>
+                      </div>
+
+                      {fuelSourceType === 'STATION' ? (
+                        <select 
+                          required 
+                          className="w-full p-3 sm:p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold outline-none focus:ring-2 focus:ring-amber-500 text-sm sm:text-lg transition-all h-[52px] sm:h-[66px]" 
+                          value={selectedStationId} 
+                          onChange={e => setSelectedStationId(e.target.value)}
+                        >
+                          <option value="">Choose Station...</option>
+                          {masterData.fuelStations.map(s => (
+                            <option key={s.id} value={s.id}>
+                              {s.isInternal ? '🛢️' : '⛽'} {s.name} ({s.isInternal ? 'Internal Tanker' : 'Petroleum Pump'})
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <select 
+                          required 
+                          className="w-full p-3 sm:p-4 bg-emerald-50 border border-emerald-100 rounded-2xl font-bold outline-none focus:ring-2 focus:ring-emerald-500 text-sm sm:text-lg transition-all h-[52px] sm:h-[66px] text-emerald-900" 
+                          value={selectedPartyId} 
+                          onChange={e => setSelectedPartyId(e.target.value)}
+                        >
+                          <option value="">Choose Party...</option>
+                          {dieselParties.map(p => (
+                            <option key={p.id} value={p.id}>
+                              🤝 {p.name} (Party Account)
+                            </option>
+                          ))}
+                        </select>
+                      )}
                   </div>
                </div>
 
@@ -958,6 +1044,7 @@ _via SapnaCarting Portal_`;
               {completedLogs.slice(0, visibleCount).map((item) => {
                 const truck = trucks.find(t => t.id === item.truckId);
                 const station = masterData.fuelStations.find(s => s.id === item.stationId || s.name === item.stationId);
+                const party = dieselParties.find(p => p.id === item.partyId);
                 return (
                   <tr key={item.id} className="hover:bg-slate-50 transition-colors group cursor-pointer" onClick={() => setViewingLog(item)}>
                     <td className="px-4 sm:px-8 py-4 font-bold text-slate-500 whitespace-nowrap">{item.date.split('-').reverse().join('/')}</td>
@@ -976,7 +1063,17 @@ _via SapnaCarting Portal_`;
                       })()}
                     </td>
                     <td className="px-4 sm:px-8 py-4 hidden md:table-cell">
-                      {station ? (
+                      {party ? (
+                        <button 
+                          onClick={(e) => { 
+                            e.stopPropagation(); 
+                            onNavigate?.('party-ledger', { partyId: party.id });
+                          }}
+                          className="font-black text-emerald-600 uppercase text-[10px] hover:bg-emerald-50 px-2 py-1 rounded transition-colors border border-emerald-200"
+                        >
+                          🤝 {party.name}
+                        </button>
+                      ) : station ? (
                         (role === 'ADMIN') ? (
                           <button 
                             onClick={(e) => { 
@@ -1024,6 +1121,19 @@ _via SapnaCarting Portal_`;
                        <div className="flex flex-col sm:flex-row justify-end gap-2 sm:gap-4">
                           <button onClick={(e) => { e.stopPropagation(); handleEdit(item); }} className="text-amber-600 font-black text-[9px] uppercase tracking-widest hover:underline">Edit</button>
                           <button onClick={(e) => { e.stopPropagation(); shareToWhatsApp(item); }} className="text-emerald-500 font-black text-[9px] uppercase tracking-widest hover:underline">Share</button>
+                          {onDeleteLog && (
+                            <button 
+                              onClick={(e) => { 
+                                e.stopPropagation(); 
+                                if (window.confirm("Are you sure you want to delete this fueling record? This will also remove any linked ledger entries.")) {
+                                  onDeleteLog(item.id); 
+                                }
+                              }} 
+                              className="text-rose-500 font-black text-[9px] uppercase tracking-widest hover:underline"
+                            >
+                              Delete
+                            </button>
+                          )}
                        </div>
                     </td>
                   </tr>
@@ -1038,6 +1148,7 @@ _via SapnaCarting Portal_`;
            {completedLogs.slice(0, visibleCount).map((item) => {
              const truck = trucks.find(t => t.id === item.truckId);
              const station = masterData.fuelStations.find(s => s.id === item.stationId || s.name === item.stationId);
+             const party = dieselParties.find(p => p.id === item.partyId);
              const distance = item.odometer - (item.previousOdometer || 0);
              const amount = (item.fuelLiters || 0) * (item.dieselPrice || 0);
              
@@ -1073,8 +1184,10 @@ _via SapnaCarting Portal_`;
                         <p className="text-xs font-black text-slate-900">{distance} KM</p>
                      </div>
                      <div className="space-y-1 col-span-2">
-                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-tight">Station</p>
-                        <p className="text-xs font-bold text-rose-500 uppercase truncate">{station?.name || 'Self/Unknown'}</p>
+                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-tight">Source</p>
+                        <p className="text-xs font-bold text-rose-500 uppercase truncate">
+                          {party ? `🤝 ${party.name}` : (station?.name || 'Self/Unknown')}
+                        </p>
                      </div>
                   </div>
 

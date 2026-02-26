@@ -14,6 +14,8 @@ interface CoalTransportProps {
   onAddLogs?: (logs: CoalLog[]) => void;
   onUpdateFuel?: (truckId: string, prodDate: string, liters: number) => void;
   onAddTrigger?: () => void;
+  onLoadMore?: () => void;
+  hasMore?: boolean;
   navParams?: { truckId?: string; date?: string } | null;
   onClearNav?: () => void;
   currentUser: any;
@@ -21,7 +23,7 @@ interface CoalTransportProps {
 }
 
 const CoalTransport: React.FC<CoalTransportProps> = ({ 
-  logs, trucks, drivers, fuelLogs, onDelete, onEdit, onUpdateLogs, onAddLogs, onUpdateFuel, onAddTrigger, navParams, onClearNav, currentUser, role 
+  logs, trucks, drivers, fuelLogs, onDelete, onEdit, onUpdateLogs, onAddLogs, onUpdateFuel, onAddTrigger, onLoadMore, hasMore, navParams, onClearNav, currentUser, role 
 }) => {
   const [truckFilter, setTruckFilter] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
@@ -1353,13 +1355,13 @@ const CoalTransport: React.FC<CoalTransportProps> = ({
         </div>
         
         {/* Load More Button */}
-        {aggregatedData.length > visibleGroupCount && (
+        {hasMore && (
           <div className="p-8 text-center bg-slate-50/30 border-t border-slate-50">
              <button 
-                onClick={() => setVisibleGroupCount(prev => prev + 30)}
+                onClick={onLoadMore}
                 className="px-8 py-3 bg-white border border-slate-200 text-slate-600 rounded-xl font-black uppercase text-[10px] tracking-widest shadow-sm hover:bg-slate-900 hover:text-white transition-all active:scale-95"
              >
-                Load More Records ({aggregatedData.length - visibleGroupCount} more)
+                Load More Records
              </button>
           </div>
         )}

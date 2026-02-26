@@ -5,7 +5,7 @@ import { FleetState } from '../types';
 
 const COLORS = ['#f59e0b', '#3b82f6', '#10b981', '#ef4444'];
 
-const Dashboard: React.FC<{ state: FleetState }> = ({ state }) => {
+const Dashboard: React.FC<{ state: FleetState; onRefresh?: () => void; syncStatus?: 'idle' | 'syncing' | 'completed' }> = ({ state, onRefresh, syncStatus = 'idle' }) => {
   const stats = useMemo(() => {
     const totalWeight = state.tripLogs.reduce((acc, l) => acc + (l.weightMT || 0), 0);
     const totalTrips = state.tripLogs.reduce((acc, l) => acc + l.tripCount, 0);
@@ -33,8 +33,26 @@ const Dashboard: React.FC<{ state: FleetState }> = ({ state }) => {
           <h2 className="text-2xl font-black text-slate-800 tracking-tight">Fleet Analytics</h2>
           <p className="text-slate-500 text-sm font-medium uppercase tracking-widest opacity-60">Real-time performance metrics</p>
         </div>
-        <div className="bg-white px-4 py-2 rounded-xl shadow-sm border border-slate-100 hidden sm:block">
-          <span className="text-xs font-black text-slate-400 uppercase tracking-widest">Live Syncing</span>
+        <div className="flex items-center gap-3">
+          {onRefresh && (
+            <button 
+              onClick={onRefresh}
+              disabled={syncStatus === 'syncing'}
+              className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all shadow-sm active:scale-95 flex items-center gap-2 ${
+                syncStatus === 'completed'
+                  ? 'bg-emerald-600 text-white border-emerald-600'
+                  : 'bg-emerald-50 text-emerald-600 border-emerald-100 hover:bg-emerald-600 hover:text-white'
+              }`}
+            >
+              <span className={syncStatus === 'syncing' ? 'animate-spin' : ''}>
+                {syncStatus === 'completed' ? '✅' : '🔄'}
+              </span>
+              {syncStatus === 'completed' ? 'Sync Completed' : 'Sync Records'}
+            </button>
+          )}
+          <div className="bg-white px-4 py-2 rounded-xl shadow-sm border border-slate-100 hidden sm:block">
+            <span className="text-xs font-black text-slate-400 uppercase tracking-widest">Live Syncing</span>
+          </div>
         </div>
       </div>
 

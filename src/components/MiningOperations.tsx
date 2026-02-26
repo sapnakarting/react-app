@@ -17,12 +17,14 @@ interface MiningProps {
   onEditTrigger?: (log: MiningLog) => void;
   navParams?: { truckId?: string; date?: string } | null;
   onClearNav?: () => void;
+  onLoadMore?: () => void;
+  hasMore?: boolean;
   currentUser: any;
   role: string | null;
 }
 
 const MiningOperations: React.FC<MiningProps> = ({ 
-  logs, trucks, drivers, fuelLogs, onDelete, onBulkUploadTrigger, onAddTrigger, onEdit: onEditProp, navParams, onClearNav, currentUser, role 
+  logs, trucks, drivers, fuelLogs, onDelete, onBulkUploadTrigger, onAddTrigger, onEdit: onEditProp, navParams, onClearNav, onLoadMore, hasMore, currentUser, role 
 }) => {
   const [truckFilter, setTruckFilter] = useState('');
   const [dateFilter, setDateFilter] = useState(''); // NEW state for date filtering in mining
@@ -138,6 +140,16 @@ const MiningOperations: React.FC<MiningProps> = ({
             </tbody>
           </table>
         </div>
+        {hasMore && (
+          <div className="p-8 text-center bg-slate-50/30 border-t border-slate-50">
+             <button 
+                onClick={onLoadMore}
+                className="px-8 py-3 bg-white border border-slate-200 text-slate-600 rounded-xl font-black uppercase text-[10px] tracking-widest shadow-sm hover:bg-slate-900 hover:text-white transition-all active:scale-95"
+             >
+                Load More Records
+             </button>
+          </div>
+        )}
       </div>
       
       {selectedGroup && (

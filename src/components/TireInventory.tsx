@@ -49,10 +49,26 @@ const TireInventory: React.FC<TireInventoryProps> = ({ state, onAddTire, onUpdat
   }, [state.masterData.tireBrands]);
 
   const allTires = useMemo(() => {
-    const mountedTires = state.trucks.flatMap(truck => 
-      truck.tires.map(t => ({ ...t, truckId: truck.id, plateNumber: truck.plateNumber }))
-    );
-    return [...mountedTires, ...state.tireInventory];
+    const tireMap = new Map<string, any>();
+    
+    // First, add all from inventory (base data)
+    state.tireInventory.forEach(t => {
+      tireMap.set(t.id, { ...t });
+    });
+    
+    // Then, overlay with mounted tires (enriched with plate/position)
+    state.trucks.forEach(truck => {
+      (truck.tires || []).forEach(t => {
+        const existing = tireMap.get(t.id);
+        tireMap.set(t.id, { 
+          ...(existing || t), 
+          truckId: truck.id, 
+          plateNumber: truck.plateNumber 
+        });
+      });
+    });
+    
+    return Array.from(tireMap.values());
   }, [state.trucks, state.tireInventory]);
 
   const brands = useMemo(() => ['ALL', ...new Set(allTires.map(t => t.brand))], [allTires]);
