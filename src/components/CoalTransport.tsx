@@ -256,12 +256,15 @@ const CoalTransport: React.FC<CoalTransportProps> = ({
     }
     const anchorDate = new Date(anchorDateStr);
     const firstOfMonth = new Date(anchorDate.getFullYear(), anchorDate.getMonth(), 1);
-    const startOfMonthStr = firstOfMonth.toISOString().split('T')[0];
+    
+    let r1StartDateStr = firstOfMonth.toISOString().split('T')[0];
+    if (startDate && !isNaN(Date.parse(startDate))) {
+       r1StartDateStr = startDate;
+    }
     
     const r2DateStr = anchorDateStr; 
     const r2Date = new Date(r2DateStr);
 
-    const r1StartDateStr = startOfMonthStr;
     const r1EndDate = new Date(r2Date);
     r1EndDate.setDate(r1EndDate.getDate() - 1);
     const r1EndDateStr = r1EndDate.toISOString().split('T')[0];
@@ -409,14 +412,14 @@ const CoalTransport: React.FC<CoalTransportProps> = ({
     
     const mtdDataTonnage = [
       ['Metric Tonnage (MT)', Number(mtd.net1.toFixed(3)), Number(mtd.net2.toFixed(3)), Number((mtd.net1 + mtd.net2).toFixed(3))],
-      ['Avg Load/Trip (MT)', Number(mtd.avgLoad1.toFixed(3)), Number(mtd.avgLoad2.toFixed(3)), Number(((mtd.avgLoad1 + mtd.avgLoad2) / 2).toFixed(3))],
-      ['Avg Diesel/Trip (L)', Number(mtd.avgFuel1.toFixed(3)), Number(mtd.avgFuel2.toFixed(3)), Number(((mtd.avgFuel1 + mtd.avgFuel2) / 2).toFixed(3))]
+      ['Avg Load/Trip (MT)', Number(mtd.avgLoad1.toFixed(3)), Number(mtd.avgLoad2.toFixed(3)), Number((mtd.avgLoad2 === 0 ? mtd.avgLoad1 : (mtd.avgLoad1 + mtd.avgLoad2) / 2).toFixed(3))],
+      ['Avg Diesel/Trip (L)', Number(mtd.avgFuel1.toFixed(3)), Number(mtd.avgFuel2.toFixed(3)), Number((mtd.avgFuel2 === 0 ? mtd.avgFuel1 : (mtd.avgFuel1 + mtd.avgFuel2) / 2).toFixed(3))]
     ];
 
     const mtdDataDiesel = [
       ['Diesel Consumed (L)', Number(mtd.fuel1.toFixed(3)), Number(mtd.fuel2.toFixed(3)), Number((mtd.fuel1 + mtd.fuel2).toFixed(3))],
       ['Amount Spent (₹)', Number(mtd.amt1.toFixed(2)), Number(mtd.amt2.toFixed(2)), Number((mtd.amt1 + mtd.amt2).toFixed(2))],
-      ['Diesel Rate (₹)', Number(mtd.rate1.toFixed(2)), Number(mtd.rate2.toFixed(2)), Number(((mtd.rate1 + mtd.rate2) / 2).toFixed(2))]
+      ['Diesel Rate (₹)', Number(mtd.rate1.toFixed(2)), Number(mtd.rate2.toFixed(2)), Number((mtd.rate2 === 0 ? mtd.rate1 : (mtd.rate1 + mtd.rate2) / 2).toFixed(2))]
     ];
 
     const financialTotals = [

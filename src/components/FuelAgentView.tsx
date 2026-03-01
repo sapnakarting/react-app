@@ -4,6 +4,7 @@ import { dbService } from '../services/dbService';
 import { storageService } from '../services/storageService';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { generateUUID, calculateTrueEfficiency } from '../utils';
 
 declare const XLSX: any;
 
@@ -47,7 +48,7 @@ const FuelAgentView: React.FC<AgentProps> = ({
   const [fuelLiters, setFuelLiters] = useState('');
   const [dieselPrice, setDieselPrice] = useState('90.55');
   const [fuelingDate, setFuelingDate] = useState(new Date().toISOString().split('T')[0]);
-  const [entryType, setEntryType] = useState<'PER_TRIP' | 'FULL_TANK'>('FULL_TANK');
+  const [entryType, setEntryType] = useState<'PER_TRIP' | 'FULL_TANK' | 'PARTIAL_FILL'>('FULL_TANK');
   const [uploadingPhotos, setUploadingPhotos] = useState(false);
   const [photosUploaded, setPhotosUploaded] = useState(false);
   const [uploadedUrls, setUploadedUrls] = useState<(string | null)[]>([null, null, null, null]);
@@ -74,7 +75,21 @@ const FuelAgentView: React.FC<AgentProps> = ({
   const [historyEndDate, setHistoryEndDate] = useState('');
   const [fleetFilter, setFleetFilter] = useState<'ALL' | 'COAL' | 'MINING'>('ALL');
   const [historyStationFilter, setHistoryStationFilter] = useState('ALL');
+  const [historyPartyFilter, setHistoryPartyFilter] = useState('ALL');
   const [visibleCount, setVisibleCount] = useState(30);
+  const [pendingSyncLogs, setPendingSyncLogs] = useState<FuelLog[]>(() => {
+    const saved = localStorage.getItem('pending_fuel_syncs');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        console.error("Failed to load pending syncs", e);
+      }
+    }
+    return [];
+  });
+  const [isSyncingPending, setIsSyncingPending] = useState(false);
+  const [isOnline, setIsOnline] = useState(window.navigator.onLine);
 
   const truckDropdownRef = useRef<HTMLDivElement>(null);
   const driverDropdownRef = useRef<HTMLDivElement>(null);
@@ -107,8 +122,25 @@ const FuelAgentView: React.FC<AgentProps> = ({
       document.removeEventListener('mousedown', handleClickOutside);
     };
   }, []);
+
+  // Network status listeners
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
   
   const [adminAgentFilter, setAdminAgentFilter] = useState('ALL');
+
+  // Persist pending sync logs
+  useEffect(() => {
+    localStorage.setItem('pending_fuel_syncs', JSON.stringify(pendingSyncLogs));
+  }, [pendingSyncLogs]);
 
   const completedLogs = useMemo(() => {
     let list = fuelLogs.filter(l => l.status !== 'IN_PROGRESS');
@@ -130,6 +162,9 @@ const FuelAgentView: React.FC<AgentProps> = ({
     if (historyStationFilter !== 'ALL') {
       list = list.filter(l => l.stationId === historyStationFilter || l.stationId === masterData.fuelStations.find(s => s.id === historyStationFilter)?.name);
     }
+    if (historyPartyFilter !== 'ALL') {
+      list = list.filter(l => l.partyId === historyPartyFilter);
+    }
 
     // Role-based filtering
     if (role === 'FUEL_AGENT') {
@@ -139,7 +174,7 @@ const FuelAgentView: React.FC<AgentProps> = ({
     }
 
     return list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  }, [fuelLogs, historySearch, historyStartDate, historyEndDate, trucks, fleetFilter, historyStationFilter, masterData.fuelStations, role, currentUser.username, adminAgentFilter]);
+  }, [fuelLogs, historySearch, historyStartDate, historyEndDate, trucks, fleetFilter, historyStationFilter, historyPartyFilter, dieselParties, masterData.fuelStations, role, currentUser.username, adminAgentFilter]);
 
   const selectedTruck = trucks.find(t => t.id === selectedTruckId);
 
@@ -386,35 +421,38 @@ const FuelAgentView: React.FC<AgentProps> = ({
     }
 
     setIsSubmitting(true);
-    try {
-      const logData: FuelLog = {
-        id: editingId || crypto.randomUUID(),
-        truckId: selectedTruckId,
-        driverId: selectedDriverId,
-        stationId: fuelSourceType === 'STATION' ? selectedStationId : undefined,
-        partyId: fuelSourceType === 'PARTY' ? selectedPartyId : undefined,
-        date: fuelingDate,
-        attributionDate: attributionDate,
-        entryType: entryType,
-        odometer: currentOdo,
-        previousOdometer: previousOdometer,
-        fuelLiters: parseFloat(fuelLiters),
-        dieselPrice: parseFloat(dieselPrice),
-        agentId: currentUser.username,
-        status: 'COMPLETED',
-        verificationPhotos: {
-          plate: uploadedUrls[0] || null,
-          odo: uploadedUrls[1] || null,
-          pumpStart: uploadedUrls[2] || null,
-          pumpEnd: uploadedUrls[3] || null,
-          tank: null
-        }
-      };
+    const logId = editingId || generateUUID();
+    
+    const logData: FuelLog = {
+      id: logId,
+      truckId: selectedTruckId,
+      driverId: selectedDriverId,
+      stationId: fuelSourceType === 'STATION' ? selectedStationId : undefined,
+      partyId: fuelSourceType === 'PARTY' ? selectedPartyId : undefined,
+      date: fuelingDate,
+      attributionDate: attributionDate,
+      entryType: entryType,
+      odometer: currentOdo,
+      previousOdometer: previousOdometer,
+      fuelLiters: parseFloat(fuelLiters),
+      dieselPrice: parseFloat(dieselPrice),
+      agentId: currentUser.username,
+      status: 'COMPLETED',
+      verificationPhotos: {
+        plate: uploadedUrls[0] || null,
+        odo: uploadedUrls[1] || null,
+        pumpStart: uploadedUrls[2] || null,
+        pumpEnd: uploadedUrls[3] || null,
+        tank: null
+      }
+    };
 
+    try {
       if (editingId) {
         if (onUpdateLog) await onUpdateLog(logData);
         else await dbService.updateFuelLog(logData);
       } else {
+        // Try adding the log
         if (onAddLog) await onAddLog(logData);
         else await dbService.addFuelLog(logData);
 
@@ -424,7 +462,7 @@ const FuelAgentView: React.FC<AgentProps> = ({
           const liters = parseFloat(fuelLiters);
           const price = parseFloat(dieselPrice);
           const tx = {
-            id: crypto.randomUUID(),
+            id: generateUUID(),
             partyId: selectedPartyId,
             date: fuelingDate,
             type: 'BORROW' as const,
@@ -441,11 +479,74 @@ const FuelAgentView: React.FC<AgentProps> = ({
       setLastSavedLog(logData);
       setSuccess(true);
       resetForm();
-    } catch (err) {
-      console.error(err);
-      alert("Sync failed. Check connection.");
+      // Requirement: After adding or updating, make sure it refreshes
+      try {
+          // If App.tsx refreshState is accessible via some prop or trigger, call it.
+          // In this architecture, successfully calling onAddLog/onUpdateLog usually triggers a refresh in App.tsx.
+      } catch (e) {}
+    } catch (err: any) {
+      console.error("Sync failed:", err);
+      if (!editingId) {
+        // Offline Fallback: Only for new entries
+        setPendingSyncLogs(prev => [...prev, logData]);
+        alert(`Cloud sync failed: ${err.message || 'Connection lost'}. \n\nRecord saved LOCALLY to your phone. Please sync manually from the history section once you have signal.`);
+        setSuccess(true);
+        resetForm();
+      } else {
+        alert(`Update failed: ${err.message || 'Check connection'}`);
+      }
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleSyncPending = async () => {
+    if (pendingSyncLogs.length === 0 || isSyncingPending) return;
+    
+    setIsSyncingPending(true);
+    let successCount = 0;
+    const remainingLogs: FuelLog[] = [];
+
+    for (const log of pendingSyncLogs) {
+      try {
+        if (onAddLog) await onAddLog(log);
+        else await dbService.addFuelLog(log);
+
+        if (log.partyId) {
+            const truck = trucks.find(t => t.id === log.truckId);
+            await dbService.addPartyTransaction({
+                id: generateUUID(),
+                partyId: log.partyId,
+                date: log.date,
+                type: 'BORROW',
+                fuelLiters: log.fuelLiters,
+                dieselPrice: log.dieselPrice || 0,
+                amount: (log.fuelLiters || 0) * (log.dieselPrice || 0),
+                fuelLogId: log.id,
+                remarks: `Fueled ${truck?.plateNumber || 'unknown'}`
+            });
+        }
+        successCount++;
+      } catch (err) {
+        console.error("Background sync failed for log", log.id, err);
+        remainingLogs.push(log);
+      }
+    }
+
+    setPendingSyncLogs(remainingLogs);
+    setIsSyncingPending(false);
+    
+    if (successCount > 0) {
+      alert(`Successfully synced ${successCount} record(s) to cloud!`);
+    }
+    if (remainingLogs.length > 0) {
+      alert(`${remainingLogs.length} record(s) still failing. Check your internet connection.`);
+    }
+  };
+
+  const handleDeletePending = (id: string) => {
+    if (window.confirm("Discard this locally saved record?")) {
+      setPendingSyncLogs(prev => prev.filter(l => l.id !== id));
     }
   };
 
@@ -469,7 +570,8 @@ const FuelAgentView: React.FC<AgentProps> = ({
       
       const distance = l.odometer - (l.previousOdometer || 0);
       const amount = (l.fuelLiters || 0) * (l.dieselPrice || 0);
-      const avg = l.fuelLiters > 0 ? (distance / l.fuelLiters).toFixed(3) : '0.00';
+      const trueEfficiency = calculateTrueEfficiency(l, fuelLogs.filter(fl => fl.truckId === l.truckId && fl.status === 'COMPLETED'));
+      const avg = trueEfficiency ? trueEfficiency.toFixed(3) : '--';
       
       totalLiters += l.fuelLiters;
       totalAmount += amount;
@@ -478,7 +580,7 @@ const FuelAgentView: React.FC<AgentProps> = ({
         'DATE': l.date.split('-').reverse().join('/'),
         'PLATE NO': truck?.plateNumber || 'N/A',
         'STATION': sourceName,
-        'TYPE': l.entryType === 'FULL_TANK' ? 'FULL' : 'TRIP',
+        'TYPE': l.entryType === 'FULL_TANK' ? 'FULL' : l.entryType === 'PARTIAL_FILL' ? 'PARTIAL' : 'TRIP',
         'LITERS': l.fuelLiters,
         'RATE': l.dieselPrice || 0,
         'AMOUNT': amount.toFixed(3),
@@ -541,13 +643,14 @@ const FuelAgentView: React.FC<AgentProps> = ({
 
       const distance = l.odometer - (l.previousOdometer || 0);
       const amount = (l.fuelLiters || 0) * (l.dieselPrice || 0);
-      const avg = l.fuelLiters > 0 ? (distance / l.fuelLiters).toFixed(3) : '0.00';
+      const trueEfficiency = calculateTrueEfficiency(l, fuelLogs.filter(fl => fl.truckId === l.truckId && fl.status === 'COMPLETED'));
+      const avg = trueEfficiency ? trueEfficiency.toFixed(3) : '--';
 
       return [
         l.date.split('-').reverse().join('/'),
         truck?.plateNumber || '--',
         sourceName,
-        l.entryType === 'FULL_TANK' ? 'FULL' : 'TRIP',
+        l.entryType === 'FULL_TANK' ? 'FULL' : l.entryType === 'PARTIAL_FILL' ? 'PARTIAL' : 'TRIP',
         `${l.fuelLiters.toFixed(3)} L`,
         `${(l.dieselPrice || 0).toFixed(3)}`,
         `${amount.toLocaleString()}`,
@@ -579,15 +682,19 @@ const FuelAgentView: React.FC<AgentProps> = ({
 
   const shareToWhatsApp = (log: FuelLog) => {
     const truck = trucks.find(t => t.id === log.truckId);
+    const stationName = masterData.fuelStations.find(s => s.id === log.stationId)?.name || 'N/A';
     const driver = drivers.find(d => d.id === log.driverId);
     const station = masterData.fuelStations.find(s => s.id === log.stationId);
     const p = log.verificationPhotos;
+    const distance = log.odometer - (log.previousOdometer || 0);
+    const trueEfficiency = calculateTrueEfficiency(log, fuelLogs.filter(l => l.truckId === log.truckId && l.status === 'COMPLETED'));
+    const average = trueEfficiency ? trueEfficiency.toFixed(2) : '--';
+
+    const d = new Date(log.date);
     const now = new Date();
     const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     const dateStr = now.toLocaleDateString();
     
-    const distance = (log.odometer || 0) - (log.previousOdometer || 0);
-    const average = (log.fuelLiters || 0) > 0 ? (distance / log.fuelLiters).toFixed(3) : '0.00';
 
     const msg = `*⛽ FUELING SLIP*
 -------------------------
@@ -652,16 +759,24 @@ _via SapnaCarting Portal_`;
             <span className="text-2xl sm:text-3xl">⛽</span>
             <div>
               <h2 className="text-lg sm:text-2xl font-black uppercase tracking-tight">{editingId ? 'Edit Fueling Record' : 'Fuel Station Entry'}</h2>
-              <p className="text-[9px] sm:text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">Verification & Compliance Audit</p>
+              <div className="flex items-center gap-2 mt-0.5">
+                <p className="text-[9px] sm:text-[10px] text-slate-400 font-bold uppercase tracking-widest whitespace-nowrap">Verification & Compliance Audit</p>
+                {!isOnline ? (
+                  <span className="bg-rose-500/20 text-rose-400 px-2 py-0.5 rounded text-[8px] font-black uppercase animate-pulse border border-rose-500/30">Offline</span>
+                ) : (
+                  <span className="bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded text-[8px] font-black uppercase border border-emerald-500/30">Cloud Connected</span>
+                )}
+              </div>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2 sm:gap-3 w-full sm:w-auto">
             {role === 'ADMIN' && editingId && (
               <button onClick={resetForm} className="bg-rose-500 text-white px-4 sm:px-6 py-2 rounded-xl text-[10px] font-black uppercase shadow-lg">Cancel Edit</button>
             )}
-            <div className="flex bg-white/10 p-1 rounded-xl shadow-inner w-full sm:w-auto">
-               <button type="button" onClick={() => setEntryType('PER_TRIP')} className={`flex-1 sm:flex-none px-4 py-2 rounded-lg text-[10px] font-black uppercase transition-all ${entryType === 'PER_TRIP' ? 'bg-emerald-500 text-white shadow-sm' : 'text-slate-400 hover:text-white'}`}>per trip date</button>
-               <button type="button" onClick={() => setEntryType('FULL_TANK')} className={`flex-1 sm:flex-none px-4 py-2 rounded-lg text-[10px] font-black uppercase transition-all ${entryType === 'FULL_TANK' ? 'bg-green-500 text-white shadow-sm' : 'text-slate-400 hover:text-white'}`}>full diesel date</button>
+            <div className="flex bg-white/10 p-1 rounded-xl shadow-inner w-full sm:w-auto overflow-x-auto">
+               <button type="button" onClick={() => setEntryType('PER_TRIP')} className={`flex-1 sm:flex-none px-3 py-2 rounded-lg text-[10px] font-black uppercase transition-all whitespace-nowrap ${entryType === 'PER_TRIP' ? 'bg-emerald-500 text-white shadow-sm' : 'text-slate-400 hover:text-white'}`}>per trip</button>
+               <button type="button" onClick={() => setEntryType('PARTIAL_FILL')} className={`flex-1 sm:flex-none px-3 py-2 rounded-lg text-[10px] font-black uppercase transition-all whitespace-nowrap mx-1 ${entryType === 'PARTIAL_FILL' ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-400 hover:text-white'}`}>partial fill</button>
+               <button type="button" onClick={() => setEntryType('FULL_TANK')} className={`flex-1 sm:flex-none px-3 py-2 rounded-lg text-[10px] font-black uppercase transition-all whitespace-nowrap ${entryType === 'FULL_TANK' ? 'bg-green-500 text-white shadow-sm' : 'text-slate-400 hover:text-white'}`}>full diesel</button>
             </div>
           </div>
         </div>
@@ -955,6 +1070,52 @@ _via SapnaCarting Portal_`;
           </div>
         )}
       </div>
+      
+      {/* PENDING SYNC SECTION */}
+      {pendingSyncLogs.length > 0 && (
+        <div className="bg-amber-50 rounded-[1.5rem] sm:rounded-[2.5rem] shadow-lg border-2 border-amber-200 overflow-hidden mb-8 animate-pulse-subtle">
+          <div className="p-6 sm:p-8 flex flex-col md:flex-row justify-between items-center gap-6">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 bg-amber-100 rounded-full flex items-center justify-center text-2xl">📡</div>
+              <div>
+                <h3 className="text-amber-900 font-black uppercase tracking-tight text-lg">Local Records Found</h3>
+                <p className="text-amber-700 text-[10px] font-bold uppercase tracking-widest">
+                  {pendingSyncLogs.length} entries are waiting for cloud sync
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-3 w-full md:w-auto">
+              <button 
+                onClick={handleSyncPending}
+                disabled={isSyncingPending}
+                className="flex-1 md:flex-none py-4 px-8 bg-amber-600 text-white rounded-2xl font-black uppercase text-[10px] tracking-widest shadow-xl active:scale-95 transition-all disabled:opacity-50"
+              >
+                {isSyncingPending ? 'Syncing...' : 'Sync Now'}
+              </button>
+            </div>
+          </div>
+          <div className="px-6 sm:px-8 pb-6 overflow-x-auto">
+             <div className="flex gap-4 pb-2">
+                {pendingSyncLogs.map(log => {
+                  const truck = trucks.find(t => t.id === log.truckId);
+                  return (
+                    <div key={log.id} className="min-w-[200px] bg-white p-4 rounded-2xl border border-amber-100 shadow-sm relative group">
+                       <button 
+                         onClick={() => handleDeletePending(log.id)}
+                         className="absolute -top-2 -right-2 w-6 h-6 bg-rose-500 text-white rounded-full flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition-opacity"
+                       >
+                         &times;
+                       </button>
+                       <p className="text-[9px] font-black text-slate-400 uppercase">{log.date}</p>
+                       <p className="text-sm font-black font-mono text-slate-900">{truck?.plateNumber || 'Unknown'}</p>
+                       <p className="text-xs font-bold text-emerald-600">{log.fuelLiters} L</p>
+                    </div>
+                  );
+                })}
+             </div>
+          </div>
+        </div>
+      )}
 
       {/* HISTORY TABLE */}
       <div className="bg-white rounded-[1.5rem] sm:rounded-[2.5rem] shadow-xl border border-slate-100 overflow-hidden">
@@ -991,6 +1152,20 @@ _via SapnaCarting Portal_`;
                     <option value="ALL">All Stations</option>
                     {masterData.fuelStations.map(s => (
                        <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                </select>
+             </div>
+
+             <div className="bg-slate-50 px-4 py-3 rounded-2xl border border-slate-100 flex items-center">
+                <span className="text-[10px] text-slate-400 font-black mr-2">PARTY</span>
+                <select 
+                    value={historyPartyFilter} 
+                    onChange={(e) => { setHistoryPartyFilter(e.target.value); setVisibleCount(30); }}
+                    className="flex-1 bg-transparent font-bold text-[10px] outline-none uppercase text-slate-900 cursor-pointer"
+                >
+                    <option value="ALL">All Parties</option>
+                    {dieselParties.map(p => (
+                       <option key={p.id} value={p.id}>{p.name}</option>
                     ))}
                 </select>
              </div>
@@ -1095,7 +1270,7 @@ _via SapnaCarting Portal_`;
                     </td>
                     <td className="px-4 sm:px-8 py-4 text-center whitespace-nowrap">
                        <p className="text-emerald-600 font-black">{(item.fuelLiters || 0).toFixed(3)} L</p>
-                       <p className="text-[9px] font-black text-slate-400 uppercase tracking-tighter">{item.entryType === 'FULL_TANK' ? 'full diesel' : 'per trip'}</p>
+                       <p className="text-[9px] font-black text-slate-400 uppercase tracking-tighter">{item.entryType === 'FULL_TANK' ? 'full diesel' : item.entryType === 'PARTIAL_FILL' ? 'partial fill' : 'per trip'}</p>
                     </td>
                     <td className="px-4 sm:px-8 py-4 text-center font-mono text-slate-900 hidden sm:table-cell leading-tight">
                        <p className="text-[10px] font-bold opacity-30">{(item.previousOdometer || 0).toLocaleString()}</p>
@@ -1170,7 +1345,7 @@ _via SapnaCarting Portal_`;
                      <div className="text-right">
                         <p className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">₹ {amount.toLocaleString()}</p>
                         <p className="text-lg font-black text-emerald-600">{(item.fuelLiters || 0).toFixed(3)} L</p>
-                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-tighter leading-none mt-0.5">{item.entryType === 'FULL_TANK' ? 'full diesel' : 'per trip'}</p>
+                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-tighter leading-none mt-0.5">{item.entryType === 'FULL_TANK' ? 'full diesel' : item.entryType === 'PARTIAL_FILL' ? 'partial fill' : 'per trip'}</p>
                      </div>
                   </div>
 
@@ -1250,7 +1425,8 @@ _via SapnaCarting Portal_`;
                           const hasMapping = matchingLogs.length > 0;
                           const totalWeight = matchingLogs.reduce((sum, l) => {
                              if (isCoal) return sum + ((l as CoalLog).netWeight || 0);
-                             return sum + (((l as MiningLog).gross || 0) - ((l as MiningLog).tare || 0));
+                             // Fix: Use .net for MiningLog as new form sets gross/tare to 0
+                             return sum + ((l as MiningLog).net || 0);
                           }, 0);
                           
                           return hasMapping ? (

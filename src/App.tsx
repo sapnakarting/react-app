@@ -18,9 +18,10 @@ import BulkUpload from './components/BulkUpload';
 import StationLedger from './components/StationLedger';
 import PartyLedger from './components/PartyLedger';
 import UserManagement from './components/UserManagement';
+import MiningReports from './components/MiningReports';
 import { dbService } from './services/dbService';
 import { authService } from './services/authService';
-import { FleetState, User, Tire, MiningLog, CoalLog } from './types';
+import { FleetState, User, Tire, MiningLog, CoalLog, MachineLog, MachineFuelEntry } from './types';
 
 const App: React.FC = () => {
   const [state, setState] = useState<FleetState | null>(null);
@@ -49,18 +50,42 @@ const App: React.FC = () => {
 
   const refreshState = useCallback(async () => {
     try {
-      // Use latest state in a way that doesn't trigger loops
-      const data = await dbService.getInitialState();
+      const [data, latestMining, fuelRes, latestCoal] = await Promise.all([
+        dbService.getInitialState(),
+        dbService.getMiningLogs(100),
+        dbService.getFuelLogs(100),
+        dbService.getCoalLogs(100)
+      ]);
+      
       if (!data) return;
 
       setState(prev => {
-        if (!prev) return data;
-        return { 
+        if (!prev) return { 
           ...data, 
-          // Preserve large logs already loaded
-          coalLogs: prev.coalLogs,
-          miningLogs: prev.miningLogs,
-          fuelLogs: prev.fuelLogs
+          miningLogs: latestMining, 
+          fuelLogs: fuelRes.fuelLogs, 
+          coalLogs: latestCoal 
+        };
+        
+        const merge = (old: any[], fresh: any[], sortFn: (a: any, b: any) => number) => {
+          const map = new Map();
+          (old || []).forEach(o => map.set(o.id, o));
+          (fresh || []).forEach(f => map.set(f.id, f));
+          return Array.from(map.values()).sort(sortFn);
+        };
+
+        const miningSort = (a: any, b: any) => 
+          new Date(b.date).getTime() - new Date(a.date).getTime() || 
+          (b.time || "").localeCompare(a.time || "");
+          
+        const generalSort = (a: any, b: any) => 
+          new Date(b.date).getTime() - new Date(a.date).getTime();
+
+        return { 
+          ...data,
+          miningLogs: merge(prev.miningLogs, latestMining, miningSort),
+          fuelLogs: merge(prev.fuelLogs, fuelRes.fuelLogs, generalSort),
+          coalLogs: merge(prev.coalLogs, latestCoal, generalSort)
         };
       });
     } catch (err) {
@@ -508,7 +533,7 @@ const App: React.FC = () => {
       return null; // Side effect will trigger re-render
     }
 
-    if (role === 'MINING_ENTRY' && !['mining-ops', 'mining-entry', 'mining-bulk'].includes(activeView)) {
+    if (role === 'MINING_ENTRY' && !['mining-ops', 'mining-entry', 'mining-bulk', 'mining-reports'].includes(activeView)) {
       setActiveView('mining-ops');
       return null; // Side effect will trigger re-render
     }
@@ -528,6 +553,10 @@ const App: React.FC = () => {
             onAddTruck={async (t) => { await dbService.addTruck(t); refreshState(); }}
             initialSelectedId={selectedTruckId}
             onClearSelection={() => setSelectedTruckId(null)}
+            onNavigate={(view, params) => {
+              if (params) setNavParams(params);
+              setActiveView(view);
+            }}
           />
         );
       case 'drivers':
@@ -593,10 +622,32 @@ const App: React.FC = () => {
           drivers={state.drivers} 
           fuelLogs={state.fuelLogs}
           masterData={state.masterData}
-          onEdit={async (log) => { await dbService.updateMiningLog(log); refreshState(); }}
-          onDelete={async (id) => { await dbService.deleteMiningLog(id); refreshState(); }}
+          machines={state.machines || []}
+          machineLogs={state.machineLogs || []}
+          machineFuelEntries={state.machineFuelEntries || []}
+          onEdit={(log) => { setEditingMiningLog(log); setActiveView('mining-entry'); }}
+          onDelete={async (id) => { 
+            await dbService.deleteMiningLog(id); 
+            setState(prev => prev ? { ...prev, miningLogs: prev.miningLogs.filter(l => l.id !== id) } : prev);
+            refreshState(); 
+          }}
+          onUpdateLogs={async (logs) => { 
+            for (const log of logs) {
+              await dbService.updateMiningLog(log);
+            }
+            refreshState(); 
+          }}
           onAddLogs={async (logs) => { await dbService.addMiningLogs(logs); refreshState(); }}
-          onAddTrigger={() => setActiveView('mining-entry')}
+          onBulkUploadTrigger={() => setActiveView('mining-bulk')}
+          onReportTrigger={() => setActiveView('mining-reports')}
+          onAddTrigger={(truckId?: string, date?: string) => {
+            if (truckId && date) {
+              setNavParams({ truckId: truckId, date: date });
+            }
+            setActiveView('mining-entry');
+          }}
+          onAddMachineLog={async (log: MachineLog) => { await dbService.addMachineLog(log); refreshState(); }}
+          onAddMachineFuelEntry={async (entry: MachineFuelEntry) => { await dbService.addMachineFuelEntry(entry); refreshState(); }}
           onLoadMore={() => handleLoadMore('mining')}
           hasMore={canLoadMore.mining}
           navParams={navParams}
@@ -607,22 +658,34 @@ const App: React.FC = () => {
       case 'mining-entry':
         return (
           <div className="space-y-6">
-            <button onClick={() => setActiveView('mining-ops')} className="text-slate-400 hover:text-slate-900 font-black text-xs uppercase tracking-widest">← BACK TO MINING SUMMARY</button>
+            <button onClick={() => { setEditingMiningLog(null); setActiveView('mining-ops'); }} className="text-slate-400 hover:text-slate-900 font-black text-xs uppercase tracking-widest">← BACK TO MINING SUMMARY</button>
             <MiningEntryForm 
               trucks={state.trucks} 
               drivers={state.drivers} 
               fuelLogs={state.fuelLogs} 
+              miningLogs={state.miningLogs}
               masterData={state.masterData}
               editLog={editingMiningLog}
               currentUser={currentUser}
               onAddLog={async (log) => { await dbService.addMiningLogs([log]); refreshState(); }}
               onUpdateLog={async (log) => { await dbService.updateMiningLog(log); setEditingMiningLog(null); setActiveView('mining-ops'); refreshState(); }}
               onAddMasterDataItem={async (key, list) => { await dbService.updateMasterData(key, list); refreshState(); }}
+              onSuccess={() => { /* Stay on form for rapid entry */ }}
               navParams={navParams}
               onClearNav={() => setNavParams(null)}
             />
           </div>
         );
+       case 'mining-reports':
+         return (
+           <MiningReports 
+             logs={state.miningLogs}
+             trucks={state.trucks}
+             drivers={state.drivers}
+             masterData={state.masterData}
+             onBack={() => setActiveView('mining-ops')}
+           />
+         );
       case 'mining-bulk':
         return <BulkUpload 
           trucks={state.trucks} 
@@ -898,7 +961,7 @@ const App: React.FC = () => {
       />
       
       {/* Main Content Area */}
-      <main className="flex-1 lg:ml-64 transition-all duration-300 min-h-screen flex flex-col">
+      <main className="flex-1 lg:ml-64 transition-all duration-300 min-h-screen flex flex-col w-full max-w-full overflow-x-hidden">
         
         {/* Mobile Top Bar - Fixed to ensure it sticks */}
         <div className="lg:hidden bg-slate-900 text-white p-4 flex justify-between items-center fixed top-0 left-0 right-0 z-[99] shadow-md h-16">

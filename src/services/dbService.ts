@@ -1,5 +1,5 @@
 
-import { FleetState, FuelLog, CoalLog, Truck, Driver, Tire, MiningLog, MasterData, User, FuelBenchmarks, DailyOdoEntry, CoalSite, FuelStation, StationPayment, MiscFuelEntry } from '../types';
+import { FleetState, FuelLog, CoalLog, Truck, Driver, Tire, MiningLog, MasterData, User, FuelBenchmarks, DailyOdoEntry, CoalSite, FuelStation, StationPayment, MiscFuelEntry, Machine, MachineLog, MachineFuelEntry } from '../types';
 import { supabase } from './supabaseClient';
 import { AUTH_CONFIG } from './authService';
 
@@ -54,7 +54,7 @@ export const dbService = {
         supabase.from('material_types').select('name'),
         supabase.from('operational_sites').select('name'),
         supabase.from('carting_agents').select('name'),
-        supabase.from('loaders').select('name'),
+        supabase.from('loaders').select('*'),
         supabase.from('customers').select('name'),
         supabase.from('suppliers').select('name'),
         supabase.from('royalty_names').select('name'),
@@ -79,7 +79,18 @@ export const dbService = {
         materials: mMaterials?.map(m => m.name) || [],
         sites: mSites?.map(m => m.name) || [],
         agents: mAgents?.map(m => m.name) || [],
-        loaders: mLoaders?.map(m => m.name) || [],
+        loaders: (mLoaders || []).map(m => ({
+          id: m.name,
+          name: m.name,
+          machineType: (m.machine_type || 'OTHER') as any,
+          model: m.model,
+          registrationNo: m.registration_no,
+          status: (m.status || 'ACTIVE') as any,
+          trackingMode: (m.tracking_mode || 'HOURS') as any,
+          currentHours: m.current_hours || 0,
+          currentKm: m.current_km || 0,
+          remarks: m.remarks
+        })),
         customers: mCustomers?.map(m => m.name) || [],
         suppliers: mSuppliers?.map(m => m.name) || [],
         royaltyNames: mRoyalty?.map(m => m.name) || [],
@@ -99,6 +110,7 @@ export const dbService = {
           currentOdometer: t.current_odometer,
           wheelConfig: t.wheel_config,
           fleetType: t.fleet_type,
+          subType: t.sub_type,
           rcExpiry: t.rc_expiry,
           fitnessExpiry: t.fitness_expiry,
           insuranceExpiry: t.insurance_expiry,
@@ -119,6 +131,9 @@ export const dbService = {
         miscFuelEntries: ledgerData.miscFuelEntries,
         coalLogs: [],
         miningLogs: [],
+        machines: masterData.loaders,
+        machineLogs: [],
+        machineFuelEntries: [],
         dailyOdo: (dailyOdo || []).map(d => ({
           truckId: d.truck_id,
           date: d.date,
@@ -189,7 +204,32 @@ export const dbService = {
       driverId: m.driver_id,
       royaltyName: m.royalty_name,
       royaltyPassNo: m.royalty_pass_no,
-      cartingAgent: m.carting_agent
+      royaltyNo: m.royalty_no,
+      supplier: m.supplier,
+      customerSite: m.customer_site,
+      cartingAgent: m.carting_agent,
+      loadingGrossWt: m.loading_gross_wt,
+      loadingTareWt: m.loading_tare_wt,
+      loadingNetWt: m.loading_net_wt,
+      unloadingGrossWt: m.unloading_gross_wt,
+      unloadingTareWt: m.unloading_tare_wt,
+      unloadingNetWt: m.unloading_net_wt,
+      shortageWt: m.shortage_wt,
+      net: m.unloading_net_wt || m.loading_net_wt || 0,
+      dieselLiters: m.diesel_liters,
+      dieselAdjustment: m.diesel_adjustment,
+      airAdjustment: m.air_adjustment || 0,
+      dieselAdjType: m.diesel_adj_type,
+      dieselRate: m.diesel_rate,
+      adjustment: m.trip_adjustment || 0,
+      tripRemarks: m.trip_remarks,
+      dieselRemarks: m.diesel_remarks,
+      airRemarks: m.air_remarks || '',
+      staffWelfare: m.staff_welfare || 0,
+      rollAmount: m.roll_amount || 0,
+      gross: m.unloading_gross_wt || m.loading_gross_wt || 0,
+      tare: m.unloading_tare_wt || m.loading_tare_wt || 0,
+      agentId: m.agent_id
     }));
   },
 
@@ -631,17 +671,36 @@ export const dbService = {
       date: m.date,
       time: m.time,
       chalan_no: m.chalanNo,
-      customer_name: m.customerName, 
+      customer_name: m.customerName,
       site: m.site,
       royalty_name: m.royaltyName,
       royalty_pass_no: m.royaltyPassNo,
+      royalty_no: clean(m.royaltyNo),
+      supplier: clean(m.supplier),
+      customer_site: clean(m.customerSite),
       truck_id: m.truckId,
       driver_id: clean(m.driverId),
       carting_agent: m.cartingAgent,
       loader: m.loader,
       material: m.material,
-      gross: m.gross,
-      tare: m.tare
+      loading_gross_wt: clean(m.loadingGrossWt),
+      loading_tare_wt: clean(m.loadingTareWt),
+      loading_net_wt: clean(m.loadingNetWt),
+      unloading_gross_wt: clean(m.unloadingGrossWt),
+      unloading_tare_wt: clean(m.unloadingTareWt),
+      unloading_net_wt: clean(m.unloadingNetWt),
+      shortage_wt: clean(m.shortageWt),
+      diesel_liters: m.dieselLiters,
+      diesel_adjustment: m.dieselAdjustment,
+      air_adjustment: m.airAdjustment || 0,
+      diesel_adj_type: m.dieselAdjType || 'OTHER',
+      diesel_rate: m.dieselRate,
+      trip_adjustment: m.adjustment || 0,
+      trip_remarks: m.tripRemarks,
+      diesel_remarks: m.dieselRemarks,
+      air_remarks: m.airRemarks,
+      staff_welfare: m.staffWelfare || 0,
+      roll_amount: m.rollAmount || 0
     }));
     const { error = null } = await supabase.from('mining_logs').insert(payload);
     if (error) throw error;
@@ -655,17 +714,36 @@ export const dbService = {
         date: log.date,
         time: log.time,
         chalan_no: log.chalanNo,
-        customer_name: log.customerName, 
+        customer_name: log.customerName,
         site: log.site,
         royalty_name: log.royaltyName,
         royalty_pass_no: log.royaltyPassNo,
+        royalty_no: clean(log.royaltyNo),
+        supplier: clean(log.supplier),
+        customer_site: clean(log.customerSite),
         truck_id: log.truckId,
         driver_id: clean(log.driverId),
         carting_agent: log.cartingAgent,
         loader: log.loader,
         material: log.material,
-        gross: log.gross,
-        tare: log.tare
+        loading_gross_wt: clean(log.loadingGrossWt),
+        loading_tare_wt: clean(log.loadingTareWt),
+        loading_net_wt: clean(log.loadingNetWt),
+        unloading_gross_wt: clean(log.unloadingGrossWt),
+        unloading_tare_wt: clean(log.unloadingTareWt),
+        unloading_net_wt: clean(log.unloadingNetWt),
+        shortage_wt: clean(log.shortageWt),
+        diesel_liters: log.dieselLiters,
+        diesel_adjustment: log.dieselAdjustment,
+        air_adjustment: log.airAdjustment || 0,
+        diesel_adj_type: log.dieselAdjType || 'OTHER',
+        diesel_rate: log.dieselRate,
+        trip_adjustment: log.adjustment || 0,
+        trip_remarks: log.tripRemarks,
+        diesel_remarks: log.dieselRemarks,
+        air_remarks: log.airRemarks,
+        staff_welfare: log.staffWelfare || 0,
+        roll_amount: log.rollAmount || 0
       })
       .eq('id', log.id);
     if (error) throw error;
@@ -767,14 +845,21 @@ export const dbService = {
     if (!tableName) return;
 
     try {
-      if (key === 'coalSites' || key === 'fuelStations' || key === 'dieselParties') {
+      if (key === 'coalSites' || key === 'fuelStations' || key === 'dieselParties' || key === 'loaders') {
         const newIds = list.map(s => s.id);
         
         // 1. Delete items that were removed from the list
         if (newIds.length > 0) {
-          await supabase.from(tableName).delete().filter('id', 'not.in', `(${newIds.join(',')})`);
+          const filterCol = key === 'loaders' ? 'name' : 'id';
+          const filterIds = key === 'loaders' ? list.map(m => m.name) : newIds;
+          
+          // PostgREST "in" filter requires parentheses: (val1,val2)
+          // Values with spaces or special characters should be wrapped in double quotes
+          const filterString = `(${filterIds.map(id => typeof id === 'string' ? `"${id.replace(/"/g, '""')}"` : id).join(',')})`;
+          await supabase.from(tableName).delete().not(filterCol, 'in', filterString);
         } else {
-          await supabase.from(tableName).delete().not('id', 'is', null);
+          const filterCol = key === 'loaders' ? 'name' : 'id';
+          await supabase.from(tableName).delete().not(filterCol, 'is', null);
         }
 
         // 2. Upsert remaining items to update/add
@@ -787,6 +872,19 @@ export const dbService = {
         } else if (key === 'dieselParties') {
           const payload = list.map(p => ({ id: p.id, name: p.name, type: p.type, contact: p.contact, phone: p.phone, notes: p.notes }));
           await supabase.from('diesel_parties').upsert(payload);
+        } else if (key === 'loaders') {
+          const payload = list.map(m => ({
+            name: m.name,
+            machine_type: m.machineType,
+            model: m.model,
+            registration_no: m.registrationNo,
+            status: m.status,
+            tracking_mode: m.trackingMode,
+            current_hours: m.currentHours || 0,
+            current_km: m.currentKm || 0,
+            remarks: m.remarks
+          }));
+          await supabase.from('loaders').upsert(payload, { onConflict: 'name' });
         }
       } else {
         // For simple string lists, we still use the delete-then-insert pattern
@@ -851,6 +949,124 @@ export const dbService = {
   async deleteUser(id: string): Promise<void> {
     const table = AUTH_CONFIG.mode === 'SUPABASE' ? 'profiles' : 'app_users';
     const { error } = await supabase.from(table).delete().eq('id', id);
+    if (error) throw error;
+  },
+
+  // ─── MACHINERY MODULE ────────────────────────────────────────────
+  async getMachines(): Promise<Machine[]> {
+    const { data } = await supabase.from('loaders').select('*');
+    return (data || []).map(m => ({
+      id: m.name, // Use name as id since loaders table uses name as PK
+      name: m.name,
+      machineType: (m.machine_type || 'OTHER') as any,
+      model: m.model,
+      registrationNo: m.registration_no,
+      status: (m.status || 'ACTIVE') as any,
+      trackingMode: (m.tracking_mode || 'HOURS') as any,
+      currentHours: m.current_hours || 0,
+      currentKm: m.current_km || 0,
+      remarks: m.remarks
+    }));
+  },
+
+  async addMachine(machine: Machine): Promise<void> {
+    const { error } = await supabase.from('loaders').insert([{
+      name: machine.name,
+      machine_type: machine.machineType,
+      model: machine.model,
+      registration_no: machine.registrationNo,
+      status: machine.status,
+      tracking_mode: machine.trackingMode,
+      current_hours: machine.currentHours || 0,
+      current_km: machine.currentKm || 0,
+      remarks: machine.remarks
+    }]);
+    if (error) throw error;
+  },
+
+  async updateMachine(machine: Machine): Promise<void> {
+    const { error } = await supabase.from('loaders').update({
+      machine_type: machine.machineType,
+      model: machine.model,
+      registration_no: machine.registrationNo,
+      status: machine.status,
+      tracking_mode: machine.trackingMode,
+      current_hours: machine.currentHours || 0,
+      current_km: machine.currentKm || 0,
+      remarks: machine.remarks
+    }).eq('name', machine.name);
+    if (error) throw error;
+  },
+
+  async getMachineLogs(limit = 200): Promise<MachineLog[]> {
+    const { data } = await supabase
+      .from('machine_logs')
+      .select('*')
+      .order('date', { ascending: false })
+      .limit(limit);
+    return (data || []).map(m => ({
+      id: m.id,
+      machineId: m.machine_id,
+      date: m.date,
+      openingHours: m.opening_hours,
+      closingHours: m.closing_hours,
+      openingKm: m.opening_km,
+      closingKm: m.closing_km,
+      activities: m.activities || [],
+      remarks: m.remarks
+    }));
+  },
+
+  async addMachineLog(log: MachineLog): Promise<void> {
+    const { error } = await supabase.from('machine_logs').insert([{
+      id: log.id,
+      machine_id: log.machineId,
+      date: log.date,
+      opening_hours: clean(log.openingHours),
+      closing_hours: clean(log.closingHours),
+      opening_km: clean(log.openingKm),
+      closing_km: clean(log.closingKm),
+      activities: log.activities,
+      remarks: clean(log.remarks)
+    }]);
+    if (error) throw error;
+  },
+
+  async getMachineFuelEntries(limit = 500): Promise<MachineFuelEntry[]> {
+    const { data } = await supabase
+      .from('machine_fuel_entries')
+      .select('*')
+      .order('date', { ascending: false })
+      .limit(limit);
+    return (data || []).map(m => ({
+      id: m.id,
+      machineId: m.machine_id,
+      fuelSourceType: m.fuel_source_type as any,
+      fuelSourceId: m.fuel_source_id,
+      date: m.date,
+      fuelLiters: m.fuel_liters,
+      dieselPrice: m.diesel_price,
+      amount: m.amount || (m.fuel_liters * m.diesel_price),
+      currentHours: m.current_hours,
+      currentKm: m.current_km,
+      remarks: m.remarks
+    }));
+  },
+
+  async addMachineFuelEntry(entry: MachineFuelEntry): Promise<void> {
+    const { error } = await supabase.from('machine_fuel_entries').insert([{
+      id: entry.id,
+      machine_id: entry.machineId,
+      fuel_source_type: entry.fuelSourceType,
+      fuel_source_id: entry.fuelSourceId,
+      date: entry.date,
+      fuel_liters: entry.fuelLiters,
+      diesel_price: entry.dieselPrice,
+      amount: entry.amount,
+      current_hours: clean(entry.currentHours),
+      current_km: clean(entry.currentKm),
+      remarks: clean(entry.remarks)
+    }]);
     if (error) throw error;
   }
 };

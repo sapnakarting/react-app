@@ -93,6 +93,7 @@ export interface Truck {
   status: 'ACTIVE' | 'MAINTENANCE' | 'IDLE' | 'BREAKDOWN';
   remarks?: string;
   fleetType: FleetType;
+  subType?: 'DISPATCH' | 'INTERNAL'; // Only for MINING fleet trucks
   tires: Tire[];
   rcExpiry?: string;
   fitnessExpiry?: string;
@@ -137,9 +138,12 @@ export interface MiningLog {
   time: string;
   chalanNo: string;
   customerName: string;
-  site: string;
+  site?: string;
   royaltyName?: string;
   royaltyPassNo: string;
+  royaltyNo?: string;          // alphanumeric royalty number
+  supplier?: string;            // Supplier field (top of form)
+  customerSite?: string;        // Customer site
   truckId: string;
   driverId: string | null;
   cartingAgent: string;
@@ -148,7 +152,30 @@ export interface MiningLog {
   gross: number;
   tare: number;
   net: number;
+  // Loading weighbridge fields
+  loadingGrossWt?: number;
+  loadingTareWt?: number;
+  loadingNetWt?: number;
+  // Unloading weighbridge fields
+  unloadingGrossWt?: number;
+  unloadingTareWt?: number;
+  unloadingNetWt?: number;
+  // Auto-calculated shortage
+  shortageWt?: number;
   agentId?: string;
+  // Financial and audit tracking fields (mirrored from CoalLog)
+  dieselLiters?: number;
+  dieselAdjustment?: number; 
+  airAdjustment?: number;   
+  dieselAdjType?: 'STOCK' | 'OTHER';
+  dieselRate?: number;
+  adjustment?: number;
+  tripRemarks?: string;
+  dieselRemarks?: string;
+  airRemarks?: string;
+  staffWelfare?: number;
+  rollAmount?: number;
+  advanceFromYesterday?: number;
 }
 
 export interface FuelLog {
@@ -159,7 +186,7 @@ export interface FuelLog {
   partyId?: string;   // Set when fueled from a diesel party account
   date: string;
   attributionDate: string; // Target Production Date
-  entryType: 'PER_TRIP' | 'FULL_TANK';
+  entryType: 'PER_TRIP' | 'FULL_TANK' | 'PARTIAL_FILL';
   odometer: number;
   previousOdometer: number;
   fuelLiters: number;
@@ -246,10 +273,58 @@ export interface FuelBenchmarks {
   globalLitersPerTon: [number, number];
 }
 
+export type MachineType = 'EXCAVATOR' | 'LOADER' | 'JCB' | 'BULLDOZER' | 'CRANE' | 'OTHER';
+
+export interface Machine {
+  id: string;
+  name: string;
+  machineType: MachineType;
+  model?: string;
+  registrationNo?: string;
+  status: 'ACTIVE' | 'MAINTENANCE' | 'IDLE';
+  trackingMode: 'HOURS' | 'KM';
+  currentHours?: number;
+  currentKm?: number;
+  remarks?: string;
+}
+
+export interface MachineActivity {
+  activity: 'LOADING' | 'BLASTING' | 'PATH_MAKING' | 'STOCKPILING' | 'CRUSHING_SUPPORT' | 'OTHER';
+  durationHours?: number;
+  distanceKm?: number;
+  remarks?: string;
+}
+
+export interface MachineLog {
+  id: string;
+  machineId: string;
+  date: string;
+  openingHours?: number;
+  closingHours?: number;
+  openingKm?: number;
+  closingKm?: number;
+  activities: MachineActivity[];
+  remarks?: string;
+}
+
+export interface MachineFuelEntry {
+  id: string;
+  machineId: string;
+  fuelSourceType: 'STATION' | 'INTERNAL_TANKER' | 'DIESEL_PARTY';
+  fuelSourceId: string; // stationId, tankerId, or partyId
+  date: string;
+  fuelLiters: number;
+  dieselPrice: number;
+  amount: number;
+  currentHours?: number;
+  currentKm?: number;
+  remarks?: string;
+}
+
 export interface MasterData {
   materials: string[];
   agents: string[];
-  loaders: string[];
+  loaders: Machine[];
   royaltyNames: string[];
   sites: string[];
   suppliers: string[];
@@ -257,7 +332,7 @@ export interface MasterData {
   tireSuppliers: string[];
   tireBrands: string[];
   coalSites: CoalSite[];
-  fuelStations: FuelStation[]; // New: Fueling stations master list
+  fuelStations: FuelStation[];
   dieselParties: DieselParty[];
   benchmarks: FuelBenchmarks;
 }
@@ -271,6 +346,9 @@ export interface FleetState {
   tripLogs: TripLog[];
   coalLogs: CoalLog[];
   miningLogs: MiningLog[];
+  machines: Machine[];
+  machineLogs: MachineLog[];
+  machineFuelEntries: MachineFuelEntry[];
   dailyOdo: DailyOdoEntry[];
   purchaseHistory: TirePurchase[];
   stationPayments: StationPayment[];
